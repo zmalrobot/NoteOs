@@ -79,7 +79,7 @@ OB_EOF
 
 # Avvia window manager leggero senza decorazioni
 openbox --config-file ~/.config/openbox/rc.xml &
-sleep 0.1
+sleep 0.05
 
 # Avvia il wizard grafico di NoteOS a schermo intero (1280x800)
 python3 /usr/share/noteos-setup/wizard_app.py "$@"
@@ -92,9 +92,9 @@ WATCHDOG_PID=$!
 
 wait_plymouthd_gone() {
     # plymouthd exits asynchronously after "plymouth quit": wait until it released the DRM device
-    for _ in $(seq 1 25); do
+    for _ in $(seq 1 30); do
         pidof plymouthd >/dev/null 2>&1 || return 0
-        sleep 0.1
+        sleep 0.05
     done
     return 0
 }
@@ -116,7 +116,7 @@ for attempt in 1 2 3; do
         echo "noteos-kiosk: X exited with ${rc} after <5s (attempt ${attempt}), retrying" >&2
         plymouth quit --retain-splash 2>/dev/null || true
         wait_plymouthd_gone
-        sleep 0.5
+        sleep 0.2
     else
         break
     fi

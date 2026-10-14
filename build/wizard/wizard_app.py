@@ -701,15 +701,16 @@ class N8000SetupWizard(QMainWindow):
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.Window)
         self.setGeometry(0, 0, 1280, 800)
         self.setFixedSize(1280, 800)
-        if not getattr(self.args, "test_screenshots", False):
-            self.showFullScreen()
-        else:
-            self.show()
 
         self._apply_stylesheet()
         self._build_ui()
         self._retranslate_ui()
         self._go_to_step(self.state.get("step", 0), save=False)
+
+        if not getattr(self.args, "test_screenshots", False):
+            self.showFullScreen()
+        else:
+            self.show()
 
         QApplication.instance().installEventFilter(self)
 
@@ -720,13 +721,29 @@ class N8000SetupWizard(QMainWindow):
         self._prevent_screen_sleep()
 
         # Single-shot timer to guarantee display wake-up and repaint after the event loop starts
-        QTimer.singleShot(100, self._force_initial_display)
+        QTimer.singleShot(10, self._force_initial_display)
 
     def _force_initial_display(self):
         self.repaint()
         QApplication.flush()
         if not getattr(self.args, "dry_run", False) and not getattr(self.args, "test_screenshots", False):
             try:
+                import glob
+                for fb in glob.glob("/sys/class/graphics/fb*/blank"):
+                    try:
+                        with open(fb, "w") as f:
+                            f.write("0\n")
+                    except Exception:
+                        pass
+                for b in glob.glob("/sys/class/backlight/*/max_brightness"):
+                    try:
+                        with open(b) as f_max:
+                            max_b = f_max.read().strip()
+                        b_dir = os.path.dirname(b)
+                        with open(os.path.join(b_dir, "brightness"), "w") as f_br:
+                            f_br.write(max_b + "\n")
+                    except Exception:
+                        pass
                 subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "reset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2350,11 +2367,22 @@ def main():
     QApplication.flush()
     QApplication.processEvents()
     if not args.dry_run and not args.test_screenshots:
-        try:
-            with open("/sys/class/graphics/fb0/blank", "w") as f:
-                f.write("0\n")
-        except Exception:
-            pass
+        import glob
+        for fb in glob.glob("/sys/class/graphics/fb*/blank"):
+            try:
+                with open(fb, "w") as f:
+                    f.write("0\n")
+            except Exception:
+                pass
+        for b in glob.glob("/sys/class/backlight/*/max_brightness"):
+            try:
+                with open(b) as f_max:
+                    max_b = f_max.read().strip()
+                b_dir = os.path.dirname(b)
+                with open(os.path.join(b_dir, "brightness"), "w") as f_br:
+                    f_br.write(max_b + "\n")
+            except Exception:
+                pass
         subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 

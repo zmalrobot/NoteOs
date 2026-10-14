@@ -92,9 +92,15 @@ rm -rf "${ROOTFS_WORK}/etc/systemd/system/n8000-"*.service \
        "${ROOTFS_WORK}/usr/sbin/n8000-setup" 2>/dev/null || true
 cp -a "${BUILD_DIR}/rootfs/overlay/." "${ROOTFS_WORK}/"
 
-# 3. Install compiled kernel modules if available
+# 3. Install compiled kernel modules
 echo "--> Installing kernel modules in ${ROOTFS_WORK}/lib/modules/..."
 mkdir -p "${ROOTFS_WORK}/lib/modules"
+if [ ! -d "${OUT_DIR}/modules/lib/modules" ] && [ -d "${REPO_ROOT}/../NoteN8000Linux/out/n8000/modules/lib/modules" ]; then
+    echo "    Importing kernel modules from NoteN8000Linux..."
+    mkdir -p "${OUT_DIR}/modules"
+    cp -a "${REPO_ROOT}/../NoteN8000Linux/out/n8000/modules/lib" "${OUT_DIR}/modules/"
+fi
+
 if [ -d "${OUT_DIR}/modules/lib/modules" ]; then
     cp -a "${OUT_DIR}/modules/lib/modules/." "${ROOTFS_WORK}/lib/modules/"
     for d in "${ROOTFS_WORK}/lib/modules"/*; do
@@ -105,6 +111,18 @@ if [ -d "${OUT_DIR}/modules/lib/modules" ]; then
         fi
     done
 fi
+
+# Verify critical kernel modules were installed (fail build if Wi-Fi driver is missing)
+MODULE_COUNT=$(find "${ROOTFS_WORK}/lib/modules" -name "*.ko" 2>/dev/null | wc -l)
+if [ "${MODULE_COUNT}" -eq 0 ]; then
+    echo "CRITICAL ERROR: No kernel modules installed in ${ROOTFS_WORK}/lib/modules!" >&2
+    exit 1
+fi
+if ! find "${ROOTFS_WORK}/lib/modules" -name "brcmfmac.ko" | grep -q brcmfmac; then
+    echo "CRITICAL ERROR: Wi-Fi driver brcmfmac.ko not found in rootfs modules!" >&2
+    exit 1
+fi
+echo "    Verified ${MODULE_COUNT} kernel modules installed (including brcmfmac.ko)."
 
 # 4. Install setup wizard and desktop catalogs
 echo "--> Installing setup wizard and desktop catalogs..."

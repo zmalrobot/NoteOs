@@ -371,8 +371,9 @@ class WifiScanWorker(QThread):
             self.finished_sig.emit(nets)
             return
 
-        # 1. Pre-scan: Ensure radio is enabled and interface is UP
+        # 1. Pre-scan: Ensure kernel driver module is loaded, radio is enabled, and interface is UP
         try:
+            subprocess.run(["modprobe", "brcmfmac"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
             subprocess.run(["rfkill", "unblock", "wifi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
             subprocess.run(["nmcli", "radio", "wifi", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
             subprocess.run(["ip", "link", "set", "wlan0", "up"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
@@ -729,7 +730,7 @@ class N8000SetupWizard(QMainWindow):
                 subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "reset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
                 pass
 
@@ -2350,7 +2351,7 @@ def main():
     QApplication.processEvents()
     if not args.dry_run and not args.test_screenshots:
         subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-        subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     if args.test_screenshots:
         QTimer.singleShot(200, lambda: run_automated_screenshots(win, args.test_screenshots))

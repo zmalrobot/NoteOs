@@ -15,9 +15,17 @@ export QT_SCALE_FACTOR=1
 mkdir -p /var/lib/noteos
 
 # Assicura che Plymouth venga chiuso se lo script termina inaspettatamente
-trap 'plymouth quit 2>/dev/null || true' EXIT
+trap 'plymouth quit --retain-splash 2>/dev/null || true' EXIT
 
-# Disattiva console blanking sul kernel virtual terminal (VT1)
+# Ensure display panel backlight is turned on at full brightness immediately
+for b in /sys/class/backlight/*; do
+    if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
+        cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
+    fi
+done
+
+# Disattiva console blanking sui terminali virtuali (VT1 e VT7)
+TERM=linux setterm --blank 0 --powerdown 0 </dev/tty7 >/dev/tty7 2>/dev/null || true
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
 cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
@@ -26,6 +34,7 @@ xset dpms force on 2>/dev/null || true
 xset s off 2>/dev/null || true
 xset -dpms 2>/dev/null || true
 xset s noblank 2>/dev/null || true
+xrandr --output VGA-1 --auto 2>/dev/null || true
 
 # Ensure display panel backlight is turned on at full brightness
 for b in /sys/class/backlight/*; do
@@ -69,7 +78,7 @@ XINIT_EOF
 chmod +x /tmp/noteos-kiosk-xinitrc
 
 # Watchdog: the boot splash must never stay on screen forever, whatever happens.
-( sleep 90; plymouth quit 2>/dev/null || true ) &
+( sleep 90; plymouth quit --retain-splash 2>/dev/null || true ) &
 WATCHDOG_PID=$!
 
 wait_plymouthd_gone() {
@@ -87,15 +96,16 @@ plymouth deactivate 2>/dev/null || true
 sleep 0.5
 
 # NOTE: no "exec" here, otherwise the EXIT trap above would never run.
+# Xorg runs on vt7 (standard graphics VT) to isolate display from kernel console/plymouth on vt1.
 rc=1
 for attempt in 1 2 3; do
     started=$(date +%s)
-    xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -dpms -quiet && rc=0 || rc=$?
+    xinit /tmp/noteos-kiosk-xinitrc -- :0 vt7 -nolisten tcp -s 0 -quiet && rc=0 || rc=$?
     [ "${rc}" -eq 0 ] && break
     # X died quickly (e.g. DRM still busy): drop the splash completely and retry
     if [ $(( $(date +%s) - started )) -lt 20 ]; then
         echo "noteos-kiosk: X exited with ${rc} after <20s (attempt ${attempt}), retrying" >&2
-        plymouth quit 2>/dev/null || true
+        plymouth quit --retain-splash 2>/dev/null || true
         wait_plymouthd_gone
         sleep 1
     else

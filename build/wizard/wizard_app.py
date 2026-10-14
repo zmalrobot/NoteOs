@@ -1117,6 +1117,7 @@ class N8000SetupWizard(QMainWindow):
         self.wifi_list = QListWidget()
         self.wifi_list.setMaximumHeight(180)
         self.wifi_list.itemClicked.connect(self._on_wifi_selected)
+        self.wifi_list.currentItemChanged.connect(lambda cur, prev: self._on_wifi_selected(cur) if cur else None)
         v.addWidget(self.wifi_list)
 
         self.inp_hidden_ssid = QLineEdit()
@@ -1176,36 +1177,151 @@ class N8000SetupWizard(QMainWindow):
                 item = QListWidgetItem(f"📶  {mark}{ssid}   —   {sig}%   [{sec or 'APERTA'}]")
                 item.setData(Qt.UserRole, ssid)
                 self.wifi_list.addItem(item)
+        if self.wifi_list.count() > 0:
+            self.wifi_list.setCurrentRow(0)
+            self.state["wifi_ssid"] = self.wifi_list.item(0).data(Qt.UserRole)
 
     def _on_wifi_selected(self, item):
         self.state["wifi_ssid"] = item.data(Qt.UserRole)
 
     def _check_internet(self):
+        """
+        Verifica la connettività Internet in modo resiliente:
+        1. Attende l'assegnazione dell'indirizzo IP via DHCP da parte del router (fino a 10s).
+        2. Esegue test HTTP via IPv4 (-4) su deb.debian.org e fallback su endpoint leggeri.
+        3. Verifica ping verso DNS pubblico (1.1.1.1) in caso di latenza DNS.
+        Ritorna: (ok: bool, info: str, is_local_only: bool)
+        """
         if getattr(self.args, "simulate_no_net", False):
-            return False, "Nessuna risposta da deb.debian.org (rete assente simulata)"
+            return False, "Nessuna risposta da deb.debian.org (rete assente simulata)", False
         if self.args.dry_run:
-            return True, self.state.get("wifi_ssid") or "TIM-33744972"
-        rc = subprocess.run(
-            ["curl", "-fsSI", "--max-time", "8", "http://deb.debian.org/debian/dists/bookworm/Release"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).returncode
-        return (rc == 0), (self.state.get("wifi_ssid") or "Rete attiva")
+            return True, self.state.get("wifi_ssid") or "TIM-33744972", False
+
+        # 1. Attesa assegnazione IP / route default via DHCP
+        ip_assigned = None
+        for _ in range(10):
+            try:
+                addr_out = subprocess.run(["ip", "-4", "addr", "show", "wlan0"],
+                                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2).stdout
+                for line in addr_out.splitlines():
+                    if "inet " in line:
+                        ip_assigned = line.strip().split()[1].split("/")[0]
+                        break
+                route_out = subprocess.run(["ip", "route", "show", "default"],
+                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2).stdout
+                if "default via" in route_out and ip_assigned:
+                    break
+            except Exception:
+                pass
+            time.sleep(1)
+
+        # 2. Test HTTP su repository Debian ed endpoint di fallback
+        endpoints = [
+            "http://deb.debian.org/debian/dists/bookworm/Release",
+            "http://connectivity-check.ubuntu.com",
+            "http://www.google.com/generate_204",
+        ]
+        for ep in endpoints:
+            try:
+                rc = subprocess.run(
+                    ["curl", "-4", "-fsSI", "--connect-timeout", "4", "--max-time", "6", ep],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8
+                ).returncode
+                if rc == 0:
+                    net_label = self.state.get("wifi_ssid") or "Wi-Fi"
+                    if ip_assigned:
+                        net_label += f" ({ip_assigned})"
+                    return True, net_label, False
+            except Exception:
+                continue
+
+        # 3. Test ping IP pubblico per verificare se il DNS è temporaneamente lento
+        try:
+            ping_rc = subprocess.run(["ping", "-4", "-c", "1", "-W", "2", "1.1.1.1"],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4).returncode
+            if ping_rc == 0:
+                net_label = (self.state.get("wifi_ssid") or "Wi-Fi") + " [Rete attiva, DNS lento]"
+                return True, net_label, False
+        except Exception:
+            pass
+
+        if ip_assigned:
+            return False, f"Wi-Fi connesso con IP {ip_assigned}, ma accesso web a deb.debian.org non ancora pronto", True
+
+        return False, "Nessun indirizzo IP ricevuto dal router (timeout DHCP o associazione non riuscita)", False
 
     def _connect_wifi_and_check(self):
         ssid = self.inp_hidden_ssid.text().strip() if self.chk_hidden_wifi.isChecked() else self.state.get("wifi_ssid", "")
         pw = self.inp_wifi_pass.text()
-        if not self.args.dry_run and ssid:
-            cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+
+        if not ssid:
+            self._update_wifi_banner(err_msg="Seleziona una rete Wi-Fi dall'elenco prima di connetterti")
+            return
+
+        self.lbl_wifi_status.setText(f"⏳ Connessione a '{ssid}' in corso...")
+        self.lbl_wifi_status.setStyleSheet("color: #58a6ff; font-size: 17px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
+        self.btn_connect_wifi.setEnabled(False)
+        QApplication.processEvents()
+
+        err_detail = None
+
+        if not self.args.dry_run:
+            # Sblocca canali Wi-Fi europei (1-13)
+            subprocess.run(["iw", "reg", "set", "IT"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # Rimuove profili precedenti con lo stesso SSID per evitare conflitti di credenziali o sicurezza
+            subprocess.run(["nmcli", "connection", "delete", "id", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["nmcli", "connection", "delete", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+            # Stadio 1: Connessione standard con timeout
+            cmd = ["nmcli", "--wait", "25", "dev", "wifi", "connect", ssid]
             if pw:
                 cmd += ["password", pw]
             if self.chk_hidden_wifi.isChecked():
                 cmd += ["hidden", "yes"]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        ok, info = self._check_internet()
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                err_detail = res.stderr.strip() or res.stdout.strip()
+                # Stadio 2: Fallback per incompatibilità WPA3-SAE o DFS su BCM4334
+                # Se la rete usa WPA2/WPA3 mixed mode o canali DFS, forza il profilo WPA-PSK (WPA2) puro su banda 2.4 GHz
+                if pw:
+                    subprocess.run(["nmcli", "connection", "delete", "id", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    subprocess.run(["nmcli", "connection", "delete", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    add_cmd = [
+                        "nmcli", "connection", "add", "type", "wifi",
+                        "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
+                        "802-11-wireless.band", "bg",
+                        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", pw
+                    ]
+                    res_add = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if res_add.returncode == 0:
+                        res_up = subprocess.run(["nmcli", "--wait", "25", "connection", "up", ssid],
+                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        if res_up.returncode == 0:
+                            err_detail = None
+                        else:
+                            err_detail = res_up.stderr.strip() or err_detail
+
+        self.btn_connect_wifi.setEnabled(True)
+
+        ok, info, is_local_only = self._check_internet()
         self.state["net_connected"] = ok
         self.state["net_name"] = info if ok else ""
-        self._update_wifi_banner(err_msg=None if ok else info)
+
+        if ok:
+            self._update_wifi_banner(err_msg=None)
+        elif is_local_only:
+            # Wi-Fi connesso con IP locale: avvisa ma abilita il proseguimento per non bloccare l'utente
+            self.lbl_wifi_status.setText(f"⚠️ {info}.\nPuoi proseguire al passo successivo se la connessione è attiva.")
+            self.lbl_wifi_status.setStyleSheet("color: #d29922; font-size: 15px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
+            self.state["net_connected"] = True
+            self.state["net_name"] = ssid
+            self.btn_next.setEnabled(True)
+        else:
+            final_err = err_detail if err_detail else info
+            self._update_wifi_banner(err_msg=final_err)
+
         self._save_state()
 
     def _update_wifi_banner(self, err_msg=None):

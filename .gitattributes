@@ -1,0 +1,31 @@
+# NoteOS — .gitattributes
+# Ensure consistent line endings across platforms
+* text=auto eol=lf
+
+# Explicit shell and Python scripts as LF
+*.sh text eol=lf
+*.py text eol=lf
+*.conf text eol=lf
+*.list text eol=lf
+*.dts text eol=lf
+*.dtsi text eol=lf
+*.patch text eol=lf
+*.sfdisk text eol=lf
+Makefile text eol=lf
+Dockerfile text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+
+# Binaries, archives and media files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.zip binary
+*.tar binary
+*.tar.gz binary
+*.tar.xz binary
+*.cpio binary
+*.cpio.gz binary
+*.img binary
+*.deb binary
+

@@ -1,0 +1,59 @@
+# ==============================================================================
+# NoteOS — .gitignore
+# ==============================================================================
+
+# 1. Private data and backups
+backup/
+private/
+NoteOs-private/
+proprietary/*
+!proprietary/README.md
+
+# 2. Build outputs, scratch and work directories
+out/
+.work/
+cache/
+logs/
+*.log
+src/
+__pycache__/
+*.py[cod]
+*$py.class
+build/initramfs_root/
+
+# 3. Stock and proprietary materials
+*.img
+*.img.*
+*.lz4
+*.tar.md5
+*.pit
+*.mbn
+*.bin
+*.fw
+*.cal
+nvram*
+firmware/
+vendor/
+
+# Explicit whitelist exceptions ONLY for release artifacts
+!release/boot.img
+!release/boot-debug.img
+
+# 4. Secrets, keys and local environment
+.env
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+token*
+
+# 5. OS and editor artifacts
+.DS_Store
+Thumbs.db
+*~
+*.swp
+*.swo
+.vscode/
+.idea/
+

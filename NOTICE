@@ -1,0 +1,13 @@
+NoteOS
+Copyright (c) 2026 NoteOS Contributors
+
+This product includes software developed by:
+- The Linux Kernel Organization (https://www.kernel.org/)
+- Samsung Electronics Co., Ltd. (Device Tree DTS definitions)
+- The Android Open Source Project (mkbootimg utility, Apache License 2.0)
+- The Debian Project (https://www.debian.org/)
+- The KDE Community (https://kde.org/)
+- The LXQt Project (https://lxqt-project.org/)
+- PostmarketOS and Replicant community developers
+
+This repository contains NO proprietary Samsung firmware, NO modem blobs, and NO Broadcom Wi-Fi/Bluetooth firmware images. All proprietary blobs must be obtained or extracted by the device owner in accordance with docs/PROPRIETARY.md.

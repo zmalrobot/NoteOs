@@ -1,0 +1,51 @@
+# NoteOS Project License (Split Licensing: GPL-2.0-only + MIT)
+
+This repository contains components governed by distinct licenses depending on their origin and derivative constraints:
+
+1. **Linux Kernel Patches and Device Tree Files (`build/devices/*/dts/`, `build/devices/*/patches/`, `build/devices/*/kernel.config`, `build/kernel/`)**:
+   Licensed under the **GNU General Public License version 2.0 only (`GPL-2.0-only`)**, conforming to upstream Linux kernel licensing.
+
+2. **Build Scripts, Initramfs Generator, Rootfs Overlay, First-Boot Setup Wizard (`build/wizard/`), Installer Scripts (`scripts/`), and Documentation (`docs/`)**:
+   Licensed under the **MIT License**.
+
+3. **Debian Software Packages & Proprietary Firmware**:
+   Packages installed in the rootfs retain their original upstream licenses (compliant with Debian Free Software Guidelines). No proprietary firmware blobs are included in this Git repository; required firmware must be extracted locally by the user.
+
+---
+
+## Part 1 — MIT License (Scripts, Wizard, Installer, Documentation)
+
+Copyright (c) 2026 NoteOS Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## Part 2 — GNU General Public License v2.0 (`GPL-2.0-only` for Kernel Patches & Device Tree)
+
+SPDX-License-Identifier: GPL-2.0-only
+
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.

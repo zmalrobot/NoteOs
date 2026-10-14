@@ -42,6 +42,7 @@ sys.excepthook = _global_exception_handler
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QObject, QEvent, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath
 from PyQt5.QtWidgets import (
+    QAbstractButton,
     QApplication,
     QButtonGroup,
     QCheckBox,
@@ -338,6 +339,45 @@ class TouchKeyboardWidget(QFrame):
             self.target_input.insert(" ")
         else:
             self.target_input.insert(label)
+
+
+# ==============================================================================
+# WORKER THREAD SCANSIONE RETI WI-FI (ASINCRONO, NON BLOCCANTE)
+# ==============================================================================
+class WifiScanWorker(QThread):
+    finished_sig = pyqtSignal(list)
+
+    def __init__(self, dry_run=False):
+        super().__init__()
+        self.dry_run = dry_run
+
+    def run(self):
+        nets = []
+        if self.dry_run:
+            nets = [
+                ("TIM-33744972 (5 GHz)", 88, "WPA2", False),
+                ("TIM-33744972 (2.4 GHz)", 92, "WPA2", False),
+                ("Vodafone-30546686", 64, "WPA2", False),
+                ("Hotspot-Mobile-N8000", 75, "WPA2/WPA3", False),
+            ]
+            self.finished_sig.emit(nets)
+            return
+
+        try:
+            out = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list", "--rescan", "yes"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=12
+            ).stdout
+            seen = set()
+            for line in out.splitlines():
+                parts = line.split(":")
+                if len(parts) >= 4 and parts[0] and parts[0] not in seen:
+                    ssid, sig, sec, in_use = parts[0], parts[1], parts[2], parts[3]
+                    seen.add(ssid)
+                    nets.append((ssid, sig, sec or "APERTA", in_use == "*"))
+        except Exception:
+            pass
+        self.finished_sig.emit(nets)
 
 
 # ==============================================================================
@@ -875,6 +915,10 @@ class N8000SetupWizard(QMainWindow):
             self.touch_kbd.target_input = obj
             if self.state.get("vkbd_enabled", True):
                 self.touch_kbd.show()
+        elif event.type() == QEvent.MouseButtonPress:
+            if isinstance(obj, QAbstractButton):
+                if not self.touch_kbd.isAncestorOf(obj) and obj != self.btn_toggle_kbd:
+                    self.touch_kbd.hide()
         return super().eventFilter(obj, event)
 
     def _build_ui(self):
@@ -1174,47 +1218,52 @@ class N8000SetupWizard(QMainWindow):
         return w
 
     def _scan_wifi(self):
-        self.wifi_list.clear()
-        if self.args.dry_run:
-            nets = [
-                ("TIM-33744972 (5 GHz)", 88, "WPA2"),
-                ("TIM-33744972 (2.4 GHz)", 92, "WPA2"),
-                ("Vodafone-30546686", 64, "WPA2"),
-                ("Hotspot-Mobile-N8000", 75, "WPA2/WPA3"),
-            ]
-            for ssid, sig, sec in nets:
-                item = QListWidgetItem(f"📶  {ssid}   —   Segnale: {sig}%   [{sec}]")
-                item.setData(Qt.UserRole, ssid.split(" (")[0])
-                self.wifi_list.addItem(item)
-            self.wifi_list.setCurrentRow(0)
-            self.state["wifi_ssid"] = "TIM-33744972"
+        if hasattr(self, "scan_worker") and self.scan_worker and self.scan_worker.isRunning():
             return
+        self.btn_scan_wifi.setEnabled(False)
+        self.btn_scan_wifi.setText("⏳ " + self.t("s2_scan_btn"))
+        if self.wifi_list.count() == 0:
+            self.wifi_list.clear()
+            item = QListWidgetItem("⏳ Scansione reti Wi-Fi in corso...")
+            item.setFlags(Qt.NoItemFlags)
+            self.wifi_list.addItem(item)
+        self.scan_worker = WifiScanWorker(dry_run=self.args.dry_run)
+        self.scan_worker.finished_sig.connect(self._on_wifi_scan_finished)
+        self.scan_worker.start()
 
-        out = subprocess.run(
-            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list", "--rescan", "yes"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True
-        ).stdout
-        seen = set()
-        for line in out.splitlines():
-            parts = line.split(":")
-            if len(parts) >= 4 and parts[0] and parts[0] not in seen:
-                ssid, sig, sec, in_use = parts[0], parts[1], parts[2], parts[3]
-                seen.add(ssid)
-                mark = "✅ [CONNESSA] " if in_use == "*" else ""
-                item = QListWidgetItem(f"📶  {mark}{ssid}   —   {sig}%   [{sec or 'APERTA'}]")
-                item.setData(Qt.UserRole, ssid)
-                self.wifi_list.addItem(item)
-        if self.wifi_list.count() > 0:
-            self.wifi_list.setCurrentRow(0)
-            self.state["wifi_ssid"] = self.wifi_list.item(0).data(Qt.UserRole)
+    def _on_wifi_scan_finished(self, nets):
+        self.btn_scan_wifi.setEnabled(True)
+        self.btn_scan_wifi.setText(self.t("s2_scan_btn"))
+        self.wifi_list.clear()
+        if not nets:
+            item = QListWidgetItem("⚠️ Nessuna rete Wi-Fi trovata. Clicca Scansiona per riprovare.")
+            item.setFlags(Qt.NoItemFlags)
+            self.wifi_list.addItem(item)
+            return
+        selected_idx = 0
+        current_ssid = self.state.get("wifi_ssid")
+        for i, (ssid, sig, sec, in_use) in enumerate(nets):
+            mark = "✅ [CONNESSA] " if in_use else ""
+            item = QListWidgetItem(f"📶  {mark}{ssid}   —   {sig}%   [{sec}]")
+            item.setData(Qt.UserRole, ssid)
+            self.wifi_list.addItem(item)
+            if current_ssid and ssid == current_ssid:
+                selected_idx = i
+            elif in_use:
+                selected_idx = i
+        self.wifi_list.setCurrentRow(selected_idx)
+        self.state["wifi_ssid"] = self.wifi_list.item(selected_idx).data(Qt.UserRole)
 
     def _on_wifi_selected(self, item):
-        self.state["wifi_ssid"] = item.data(Qt.UserRole)
+        data = item.data(Qt.UserRole)
+        if data:
+            self.state["wifi_ssid"] = data
 
-    def _check_internet(self):
+    def _check_internet(self, wait_dhcp=False):
         """
-        Verifica la connettività Internet in modo resiliente:
-        1. Attende l'assegnazione dell'indirizzo IP via DHCP da parte del router (fino a 10s).
+        Verifica la connettività Internet in modo rapido e resiliente:
+        1. Se wait_dhcp=True, attende l'assegnazione IP via DHCP da parte del router (fino a 8s).
+           Altrimenti esegue solo un controllo immediato senza bloccare.
         2. Esegue test HTTP via IPv4 (-4) su deb.debian.org e fallback su endpoint leggeri.
         3. Verifica ping verso DNS pubblico (1.1.1.1) in caso di latenza DNS.
         Ritorna: (ok: bool, info: str, is_local_only: bool)
@@ -1224,9 +1273,24 @@ class N8000SetupWizard(QMainWindow):
         if self.args.dry_run:
             return True, self.state.get("wifi_ssid") or "TIM-33744972", False
 
+        # Verifica preliminare rapida dello stato di wlan0 per evitare attese se disconnesso
+        try:
+            dev_status = subprocess.run(["nmcli", "-t", "-f", "DEVICE,STATE", "dev"],
+                                        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2).stdout
+            wlan_connected = False
+            for line in dev_status.splitlines():
+                if line.startswith("wlan0:connected"):
+                    wlan_connected = True
+                    break
+            if not wlan_connected and not wait_dhcp:
+                return False, "Non connesso alla rete Wi-Fi", False
+        except Exception:
+            pass
+
         # 1. Attesa assegnazione IP / route default via DHCP
         ip_assigned = None
-        for _ in range(10):
+        attempts = 8 if wait_dhcp else 1
+        for _ in range(attempts):
             try:
                 addr_out = subprocess.run(["ip", "-4", "addr", "show", "wlan0"],
                                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=2).stdout
@@ -1240,7 +1304,8 @@ class N8000SetupWizard(QMainWindow):
                     break
             except Exception:
                 pass
-            time.sleep(1)
+            if wait_dhcp:
+                time.sleep(1)
 
         # 2. Test HTTP su repository Debian ed endpoint di fallback
         endpoints = [
@@ -1251,8 +1316,8 @@ class N8000SetupWizard(QMainWindow):
         for ep in endpoints:
             try:
                 rc = subprocess.run(
-                    ["curl", "-4", "-fsSI", "--connect-timeout", "4", "--max-time", "6", ep],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8
+                    ["curl", "-4", "-fsSI", "--connect-timeout", "3", "--max-time", "5", ep],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=6
                 ).returncode
                 if rc == 0:
                     net_label = self.state.get("wifi_ssid") or "Wi-Fi"
@@ -1265,7 +1330,7 @@ class N8000SetupWizard(QMainWindow):
         # 3. Test ping IP pubblico per verificare se il DNS è temporaneamente lento
         try:
             ping_rc = subprocess.run(["ping", "-4", "-c", "1", "-W", "2", "1.1.1.1"],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4).returncode
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3).returncode
             if ping_rc == 0:
                 net_label = (self.state.get("wifi_ssid") or "Wi-Fi") + " [Rete attiva, DNS lento]"
                 return True, net_label, False
@@ -1285,6 +1350,7 @@ class N8000SetupWizard(QMainWindow):
             self._update_wifi_banner(err_msg="Seleziona una rete Wi-Fi dall'elenco prima di connetterti")
             return
 
+        self.touch_kbd.hide()
         self.lbl_wifi_status.setText(f"⏳ Connessione a '{ssid}' in corso...")
         self.lbl_wifi_status.setStyleSheet("color: #58a6ff; font-size: 17px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
         self.btn_connect_wifi.setEnabled(False)
@@ -1293,46 +1359,52 @@ class N8000SetupWizard(QMainWindow):
         err_detail = None
 
         if not self.args.dry_run:
-            # Sblocca canali Wi-Fi europei (1-13)
+            # Unlock European Wi-Fi channels (1-13)
             subprocess.run(["iw", "reg", "set", "IT"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            # Rimuove profili precedenti con lo stesso SSID per evitare conflitti di credenziali o sicurezza
+            # Remove prior profiles with the same SSID to avoid conflicts or secret-agent errors
             subprocess.run(["nmcli", "connection", "delete", "id", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             subprocess.run(["nmcli", "connection", "delete", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            # Stadio 1: Connessione standard con timeout
-            cmd = ["nmcli", "--wait", "25", "dev", "wifi", "connect", ssid]
+            # Stage 1: Create persistent connection profile with PMF disabled (wifi-sec.pmf 1)
+            # This prevents status_code=16 rejection from Broadcom BCM4334 chip on modern routers
+            add_cmd = [
+                "nmcli", "connection", "add", "type", "wifi",
+                "con-name", ssid, "ssid", ssid,
+                "ifname", "wlan0",
+                "connection.autoconnect", "yes",
+            ]
             if pw:
-                cmd += ["password", pw]
+                add_cmd += [
+                    "wifi-sec.key-mgmt", "wpa-psk",
+                    "wifi-sec.psk", pw,
+                    "wifi-sec.pmf", "1",  # 1 = disabled
+                ]
             if self.chk_hidden_wifi.isChecked():
-                cmd += ["hidden", "yes"]
+                add_cmd += ["802-11-wireless.hidden", "yes"]
 
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            if res.returncode != 0:
-                err_detail = res.stderr.strip() or res.stdout.strip()
-                # Stadio 2: Fallback per incompatibilità WPA3-SAE o DFS su BCM4334
-                # Se la rete usa WPA2/WPA3 mixed mode o canali DFS, forza il profilo WPA-PSK (WPA2) puro su banda 2.4 GHz
-                if pw:
-                    subprocess.run(["nmcli", "connection", "delete", "id", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    subprocess.run(["nmcli", "connection", "delete", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    add_cmd = [
-                        "nmcli", "connection", "add", "type", "wifi",
-                        "ifname", "wlan0", "con-name", ssid, "ssid", ssid,
-                        "802-11-wireless.band", "bg",
-                        "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", pw
-                    ]
-                    res_add = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                    if res_add.returncode == 0:
-                        res_up = subprocess.run(["nmcli", "--wait", "25", "connection", "up", ssid],
-                                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                        if res_up.returncode == 0:
+            add_res = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            if add_res.returncode == 0:
+                up_res = subprocess.run(["nmcli", "--wait", "20", "connection", "up", ssid],
+                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                if up_res.returncode != 0:
+                    err_detail = up_res.stderr.strip() or up_res.stdout.strip()
+                    # Stage 2: Fallback to pure 2.4 GHz band (bg) for routers with dual-band steering issues
+                    if pw:
+                        subprocess.run(["nmcli", "connection", "modify", ssid, "802-11-wireless.band", "bg"],
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        up_res2 = subprocess.run(["nmcli", "--wait", "20", "connection", "up", ssid],
+                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                        if up_res2.returncode == 0:
                             err_detail = None
                         else:
-                            err_detail = res_up.stderr.strip() or err_detail
+                            err_detail = up_res2.stderr.strip() or err_detail
+            else:
+                err_detail = add_res.stderr.strip() or "Failed to create connection profile"
 
         self.btn_connect_wifi.setEnabled(True)
 
-        ok, info, is_local_only = self._check_internet()
+        ok, info, is_local_only = self._check_internet(wait_dhcp=True)
         self.state["net_connected"] = ok
         self.state["net_name"] = info if ok else ""
 
@@ -1968,7 +2040,7 @@ class N8000SetupWizard(QMainWindow):
         if idx == 1:
             if self.wifi_list.count() == 0:
                 self._scan_wifi()
-            ok, info, is_local_only = self._check_internet()
+            ok, info, is_local_only = self._check_internet(wait_dhcp=False)
             if ok and not self.args.dry_run:
                 self.state["net_connected"] = True
                 self.state["net_name"] = info
@@ -1980,7 +2052,7 @@ class N8000SetupWizard(QMainWindow):
                 self.state["net_name"] = self.state.get("wifi_ssid") or "Wi-Fi"
                 self.btn_next.setEnabled(True)
             else:
-                self._update_wifi_banner(err_msg=info if self.state.get("wifi_ssid") else None)
+                self._update_wifi_banner(err_msg=None)
         else:
             self.btn_next.setEnabled(True)
 
@@ -2117,6 +2189,11 @@ def main():
         win.showFullScreen()
     else:
         win.show()
+
+    # Release Plymouth only after the first GUI frame has actually rendered on screen
+    QApplication.processEvents()
+    if not args.dry_run and not args.test_screenshots:
+        subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     if args.test_screenshots:
         QTimer.singleShot(200, lambda: run_automated_screenshots(win, args.test_screenshots))

@@ -14,10 +14,8 @@ export QT_SCALE_FACTOR=1
 
 mkdir -p /var/lib/noteos
 
-# Termina Plymouth rilasciando il DRM master ma mantenendo lo splash screen attivo fino a Xorg
-if command -v plymouth >/dev/null 2>&1; then
-    plymouth quit --retain-splash 2>/dev/null || true
-fi
+# Assicura che Plymouth venga chiuso se lo script termina inaspettatamente
+trap 'plymouth quit 2>/dev/null || true' EXIT
 
 # Disattiva console blanking sul kernel virtual terminal (VT1)
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true

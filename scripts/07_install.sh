@@ -196,7 +196,7 @@ stage_format() {
         fi
     fi
 
-    adb shell "umount -f /mnt 2>/dev/null || true"
+    adb shell "umount -f /mnt /mnt/debian /data /sdcard 2>/dev/null || true"
     adb shell "mke2fs -t ext4 -F -L debian_root ${TARGET_ROOTFS_DEV}"
     adb shell "e2fsck -fy ${TARGET_ROOTFS_DEV} 2>/dev/null || true"
     log_success "Partition ${TARGET_ROOTFS_DEV} formatted cleanly as ext4 with LABEL=debian_root."
@@ -226,8 +226,21 @@ stage_rootfs() {
     fi
 
     adb shell "mkdir -p /mnt && mount -t ext4 ${TARGET_ROOTFS_DEV} /mnt"
-    log_info "Streaming and extracting rootfs archive directly to device..."
-    adb exec-out "tar -xz -C /mnt" < "${ROOTFS_TAR}"
+    log_info "Pushing rootfs archive to device..."
+    adb push "${ROOTFS_TAR}" /mnt/.rootfs.tar.gz
+    log_info "Verifying pushed archive checksum..."
+    local pushed_sha
+    pushed_sha=$(adb shell "sha256sum /mnt/.rootfs.tar.gz" | awk '{print $1}' | tr -d '\r')
+    if [ "${pushed_sha}" != "${tar_sha}" ]; then
+        die "SHA256 mismatch for pushed rootfs.tar.gz: ${pushed_sha} != ${tar_sha}"
+    fi
+
+    log_info "Bootstrapping GNU tar for accurate permissions and symlinks..."
+    adb shell "mkdir -p /tmp/gnutar && /sbin/tar -xzf /mnt/.rootfs.tar.gz -C /mnt ./usr/bin/tar ./usr/lib/arm-linux-gnueabihf && cp -L /mnt/usr/bin/tar /mnt/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 /mnt/usr/lib/arm-linux-gnueabihf/libc.so.6 /mnt/usr/lib/arm-linux-gnueabihf/libacl.so.1 /mnt/usr/lib/arm-linux-gnueabihf/libselinux.so.1 /mnt/usr/lib/arm-linux-gnueabihf/libpcre2-8.so.0 /tmp/gnutar/ && chmod 755 /tmp/gnutar/*"
+
+    log_info "Extracting full rootfs onto target partition..."
+    adb shell "/sbin/gzip -dc /mnt/.rootfs.tar.gz | /tmp/gnutar/ld-linux-armhf.so.3 --library-path /tmp/gnutar /tmp/gnutar/tar --numeric-owner -xpf - -C /mnt && rm -rf /mnt/.rootfs.tar.gz /tmp/gnutar"
+    adb shell "sync"
     log_success "Rootfs extracted successfully."
 }
 

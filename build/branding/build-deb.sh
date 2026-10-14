@@ -13,7 +13,7 @@ set -euo pipefail
 
 DEVICE="${DEVICE:-n8000}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${PROJECT_DIR}/out/${DEVICE}"
+OUT_DIR="${OUT_DIR:-$(cd "${PROJECT_DIR}/.." && pwd)/out/${DEVICE}}"
 PKG_VERSION="${NOTEOS_VERSION:-1.0.0}"
 PKG_DIR="${OUT_DIR}/noteos-branding_pkg"
 DEB_OUT="${OUT_DIR}/noteos-branding_${PKG_VERSION}_all.deb"
@@ -60,7 +60,11 @@ set -e
 if [ "$1" = "configure" ]; then
     ln -sf ../usr/lib/os-release /etc/os-release
     if [ -d /usr/share/plymouth/themes/noteos ]; then
-        ln -sf noteos/noteos.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+        if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+            plymouth-set-default-theme noteos 2>/dev/null || true
+        else
+            ln -sf /usr/share/plymouth/themes/noteos/noteos.plymouth /usr/share/plymouth/themes/default.plymouth 2>/dev/null || true
+        fi
     fi
     if command -v dconf >/dev/null 2>&1; then
         dconf update 2>/dev/null || true

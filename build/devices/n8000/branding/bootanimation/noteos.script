@@ -9,17 +9,19 @@ Window.SetBackgroundBottomColor(0.086, 0.106, 0.133);
 num_frames = 30;
 
 # Inizializza subito il primo frame per visualizzazione immediata dello splash
-anim_images[0] = Image("0000.png");
+anim_images[0] = Image("part0/0000.png");
 anim_sprite = Sprite(anim_images[0]);
-anim_sprite.SetPosition(0, 0, 0);
+anim_sprite.SetX(0);
+anim_sprite.SetY(0);
+anim_sprite.SetZ(0);
 anim_sprite.SetOpacity(1);
 
 # Carica i frame successivi dell'animazione
 for (i = 1; i < num_frames; i++) {
   if (i < 10)
-    filename = "000" + i + ".png";
+    filename = "part0/000" + i + ".png";
   else
-    filename = "00" + i + ".png";
+    filename = "part0/00" + i + ".png";
   anim_images[i] = Image(filename);
 }
 
@@ -34,3 +36,13 @@ fun refresh_callback () {
 }
 
 Plymouth.SetRefreshFunction(refresh_callback);
+
+fun display_normal_callback () {
+  anim_sprite.SetOpacity(1);
+}
+Plymouth.SetDisplayNormalFunction(display_normal_callback);
+
+fun quit_callback () {
+  anim_sprite.SetOpacity(0);
+}
+Plymouth.SetQuitFunction(quit_callback);

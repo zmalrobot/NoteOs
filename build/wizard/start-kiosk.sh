@@ -21,10 +21,19 @@ trap 'plymouth quit 2>/dev/null || true' EXIT
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
 cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
-#!/bin/sh
-xset s off
-xset -dpms
-xset s noblank
+# Force display power on immediately and disable blanking/standby
+xset dpms force on 2>/dev/null || true
+xset s off 2>/dev/null || true
+xset -dpms 2>/dev/null || true
+xset s noblank 2>/dev/null || true
+
+# Ensure display panel backlight is turned on at full brightness
+for b in /sys/class/backlight/*; do
+    if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
+        cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
+    fi
+done
+
 # Same colour as the Plymouth background: no black gap before the first Qt frame
 xsetroot -solid '#161b22' 2>/dev/null || true
 

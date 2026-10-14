@@ -44,7 +44,9 @@ class FakeRun:
         if self.slow and tool in ("curl", "ping", "nmcli"):
             time.sleep(SLOW_SECONDS)
         out, rc = "", 0
-        if tool == "nmcli" and "dev" in cmd and "-t" in cmd:
+        if tool == "nmcli" and "dev" in cmd and "wifi" in cmd and "list" in cmd:
+            out = "TestNet:90:WPA2:*\nGuestNet:60:WPA2:\n"
+        elif tool == "nmcli" and "dev" in cmd and "-t" in cmd:
             out = "wlan0:connected\n" if self.connected else "wlan0:disconnected\n"
         elif tool == "ip" and "addr" in cmd:
             out = "    inet 192.168.1.5/24 brd 192.168.1.255 scope global wlan0\n"
@@ -147,6 +149,18 @@ class WizardRegression(unittest.TestCase):
         self.assertFalse([c for c in flat if "dev wifi connect" in c],
                          "must not rely on 'nmcli dev wifi connect' (needs a SecretAgent)")
         self.assertTrue(self.win.state["net_connected"])
+
+    # 4. Wi-Fi scanning parses networks and updates QListWidget
+    def test_wifi_scan_parses_networks_and_updates_list(self):
+        self.win._scan_wifi()
+        deadline = time.time() + 10
+        while getattr(self.win, "scan_worker", None) and self.win.scan_worker.isRunning() and time.time() < deadline:
+            APP.processEvents()
+            time.sleep(0.01)
+        pump(0.1)
+        self.assertGreater(self.win.wifi_list.count(), 0)
+        first_item = self.win.wifi_list.item(0).data(Qt.UserRole)
+        self.assertEqual(first_item, "TestNet")
 
 
 def unittest_mock_patch(target, attr, value):

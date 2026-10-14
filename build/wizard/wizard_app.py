@@ -347,9 +347,17 @@ class TouchKeyboardWidget(QFrame):
 class WifiScanWorker(QThread):
     finished_sig = pyqtSignal(list)
 
-    def __init__(self, dry_run=False):
+    def __init__(self, dry_run=False, state_dir="/var/lib/noteos"):
         super().__init__()
         self.dry_run = dry_run
+        self.state_dir = state_dir
+
+    def _log(self, msg):
+        try:
+            with open(os.path.join(self.state_dir, "wifi.log"), "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} [scan] {msg}\n")
+        except Exception:
+            pass
 
     def run(self):
         nets = []
@@ -363,20 +371,74 @@ class WifiScanWorker(QThread):
             self.finished_sig.emit(nets)
             return
 
+        # 1. Pre-scan: Ensure radio is enabled and interface is UP
         try:
-            out = subprocess.run(
-                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list", "--rescan", "yes"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=12
-            ).stdout
-            seen = set()
-            for line in out.splitlines():
-                parts = line.split(":")
-                if len(parts) >= 4 and parts[0] and parts[0] not in seen:
-                    ssid, sig, sec, in_use = parts[0], parts[1], parts[2], parts[3]
+            subprocess.run(["rfkill", "unblock", "wifi"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+            subprocess.run(["nmcli", "radio", "wifi", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+            subprocess.run(["ip", "link", "set", "wlan0", "up"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        except Exception as e:
+            self._log(f"Pre-scan interface setup error: {e}")
+
+        # 2. Stage A: Read cached network list first (instant response)
+        out = ""
+        try:
+            res_cached = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=5
+            )
+            out = res_cached.stdout
+            if res_cached.returncode != 0 and res_cached.stderr:
+                self._log(f"Cached scan stderr: {res_cached.stderr.strip()}")
+        except Exception as e:
+            self._log(f"Cached scan exception: {e}")
+
+        # 3. Stage B: If cached list is empty or sparse, trigger active rescan with 25s timeout
+        lines = [l for l in out.splitlines() if l.strip()]
+        if len(lines) < 2:
+            self._log("Cached list empty or sparse, triggering active scan...")
+            try:
+                res_active = subprocess.run(
+                    ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list", "--rescan", "auto"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=25
+                )
+                if res_active.stdout.strip():
+                    out = res_active.stdout
+                if res_active.returncode != 0 and res_active.stderr:
+                    self._log(f"Active scan (--rescan auto) stderr: {res_active.stderr.strip()}")
+                    # Fallback to --rescan yes if auto failed
+                    res_yes = subprocess.run(
+                        ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY,IN-USE", "dev", "wifi", "list", "--rescan", "yes"],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=25
+                    )
+                    if res_yes.stdout.strip():
+                        out = res_yes.stdout
+                    elif res_yes.stderr:
+                        self._log(f"Active scan (--rescan yes) stderr: {res_yes.stderr.strip()}")
+            except Exception as e:
+                self._log(f"Active scan exception: {e}")
+
+        # 4. Parse networks safely handling escaped colons
+        seen = set()
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            safe_line = line.replace(r"\:", "__COLON__")
+            parts = safe_line.split(":")
+            if len(parts) >= 4:
+                ssid = parts[0].replace("__COLON__", ":").strip()
+                sig_str = parts[1].strip()
+                sec = parts[2].replace("__COLON__", ":").strip() or "OPEN"
+                in_use = parts[3].strip() == "*"
+                if ssid and ssid not in seen:
                     seen.add(ssid)
-                    nets.append((ssid, sig, sec or "APERTA", in_use == "*"))
-        except Exception:
-            pass
+                    try:
+                        sig = int(sig_str)
+                    except ValueError:
+                        sig = 50
+                    nets.append((ssid, sig, sec, in_use))
+
+        self._log(f"Scan finished: found {len(nets)} networks (seen={list(seen)[:5]})")
         self.finished_sig.emit(nets)
 
 
@@ -650,15 +712,31 @@ class N8000SetupWizard(QMainWindow):
 
         QApplication.instance().installEventFilter(self)
 
-        # Timer anti-standby: impedisce lo spegnimento o il blanking dello schermo durante il wizard
+        # Anti-standby timer: prevents display powerdown, blanking, or standby during setup
         self.anti_sleep_timer = QTimer(self)
         self.anti_sleep_timer.timeout.connect(self._prevent_screen_sleep)
-        self.anti_sleep_timer.start(45000)  # Ogni 45 secondi
+        self.anti_sleep_timer.start(30000)  # Every 30 seconds
         self._prevent_screen_sleep()
+
+        # Single-shot timer to guarantee display wake-up and repaint after the event loop starts
+        QTimer.singleShot(100, self._force_initial_display)
+
+    def _force_initial_display(self):
+        self.repaint()
+        QApplication.flush()
+        if not getattr(self.args, "dry_run", False) and not getattr(self.args, "test_screenshots", False):
+            try:
+                subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["xset", "s", "reset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
     def _prevent_screen_sleep(self):
         if not getattr(self.args, "dry_run", False):
             try:
+                subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "reset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except Exception:
@@ -1247,7 +1325,7 @@ class N8000SetupWizard(QMainWindow):
             item = QListWidgetItem("⏳ Scansione reti Wi-Fi in corso...")
             item.setFlags(Qt.NoItemFlags)
             self.wifi_list.addItem(item)
-        self.scan_worker = WifiScanWorker(dry_run=self.args.dry_run)
+        self.scan_worker = WifiScanWorker(dry_run=self.args.dry_run, state_dir=self.state_dir)
         self.scan_worker.finished_sig.connect(self._on_wifi_scan_finished)
         self.scan_worker.start()
 
@@ -2261,13 +2339,18 @@ def main():
     win = N8000SetupWizard(args)
     if not args.test_screenshots:
         win.showFullScreen()
+        win.raise_()
+        win.activateWindow()
     else:
         win.show()
 
-    # Release Plymouth only after the first GUI frame has actually rendered on screen
+    # Flush initial draw calls and wake up display immediately
+    win.repaint()
+    QApplication.flush()
     QApplication.processEvents()
     if not args.dry_run and not args.test_screenshots:
-        subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     if args.test_screenshots:
         QTimer.singleShot(200, lambda: run_automated_screenshots(win, args.test_screenshots))

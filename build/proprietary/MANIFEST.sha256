@@ -1,0 +1,10 @@
+# NoteOS Expected Proprietary Firmware Checksums for Samsung Galaxy Note 10.1 (GT-N8000)
+# These files MUST NOT be committed to git. They are extracted locally via scripts/02_extract_firmware.sh.
+# Refer to docs/PROPRIETARY.md for extraction details and upstream sources.
+
+# Broadcom BCM4334 Wi-Fi Firmware (SDIO) - From Debian package firmware-brcm80211 or stock firmware
+7b4eebe4d3bbc9a8bf3c2d55d9404cf0ed9cce3388b3d5708d2352d0af89eeb3  brcmfmac4334-sdio.bin
+
+# Broadcom BCM4334 Bluetooth Patchram - From stock Samsung firmware (/vendor/firmware/bcm4334.hcd)
+613651c0506c0ddec78788d13a8a4a3d3077468cd8445df58773c76b98b10963  BCM4334B0.hcd
+

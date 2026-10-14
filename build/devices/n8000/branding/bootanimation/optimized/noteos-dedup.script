@@ -1,0 +1,31 @@
+# Plymouth Script ottimizzato (deduplicazione dei 15 frame simmetrici: 58.59 MiB invece di 117.19 MiB)
+Window.GetMaxWidth = fun () { return Window.GetWidth(); };
+Window.GetMaxHeight = fun () { return Window.GetHeight(); };
+
+num_frames = 30;
+for (i = 0; i <= 7; i++) {
+  filename = "000" + i + ".png";
+  img = Image(filename);
+  anim_images[i] = img;
+  anim_images[15 - i] = img;
+}
+for (i = 16; i <= 22; i++) {
+  filename = "00" + i + ".png";
+  img = Image(filename);
+  anim_images[i] = img;
+  anim_images[45 - i] = img;
+}
+
+anim_sprite = Sprite();
+progress = 0;
+
+fun refresh_callback () {
+  frame_index = Math.Int(progress) % num_frames;
+  anim_sprite.SetImage(anim_images[frame_index]);
+  anim_sprite.SetX(0);
+  anim_sprite.SetY(0);
+  progress = progress + 0.5;
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);
+

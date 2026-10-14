@@ -1,0 +1,20 @@
+--- a/arch/arm/boot/dts/samsung/exynos4412-p4note.dtsi
++++ b/arch/arm/boot/dts/samsung/exynos4412-p4note.dtsi
+@@ -357,6 +357,7 @@
+ };
+ 
+ &hsotg {
++	vusb_d-supply = <&ldo15_reg>;
+ 	vusb_a-supply = <&ldo12_reg>;
+ 	dr_mode = "peripheral";
+ 	status = "okay";
+--- a/arch/arm/boot/dts/samsung/Makefile
++++ b/arch/arm/boot/dts/samsung/Makefile
+@@ -21,6 +21,7 @@
+ 	exynos4412-odroidx2.dtb \
+ 	exynos4412-origen.dtb \
+ 	exynos4412-p4note-n8010.dtb \
++	exynos4412-p4note-n8000.dtb \
+ 	exynos4412-smdk4412.dtb \
+ 	exynos4412-tiny4412.dtb \
+ 	exynos4412-trats2.dtb

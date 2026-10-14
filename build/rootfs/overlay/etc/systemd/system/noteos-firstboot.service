@@ -1,0 +1,24 @@
+[Unit]
+Description=NoteOS — Wizard Grafico Touch di Primo Avvio (noteos-setup)
+After=systemd-user-sessions.service NetworkManager.service noteos-resize-rootfs.service dbus.service plymouth-start.service
+Wants=NetworkManager.service dbus.service
+Conflicts=getty@tty1.service sddm.service plymouth-quit.service plymouth-quit-wait.service
+ConditionPathExists=!/var/lib/noteos/setup.done
+
+[Service]
+Type=simple
+User=root
+Environment=HOME=/root
+Environment=XDG_RUNTIME_DIR=/run/noteos-setup-runtime
+ExecStartPre=/bin/mkdir -p /var/lib/noteos /run/noteos-setup-runtime
+ExecStartPre=/bin/chmod 0700 /run/noteos-setup-runtime
+ExecStart=/usr/share/noteos-setup/start-kiosk.sh
+StandardInput=null
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target graphical.target
+

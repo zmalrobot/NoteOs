@@ -1,0 +1,42 @@
+--- a/arch/arm/boot/compressed/head.S
++++ b/arch/arm/boot/compressed/head.S
+@@ -314,19 +314,12 @@
+ 		ldr	r4, =zreladdr
+ #endif
+ 
+-		/*
+-		 * Set up a page table only if it won't overwrite ourself.
+-		 * That means r4 < pc || r4 - 16k page directory > &_end.
+-		 * Given that r4 > &_end is most unfrequent, we add a rough
+-		 * additional 1MB of room for a possible appended DTB.
+-		 */
+-		mov	r0, pc
+-		cmp	r0, r4
+-		ldrcc	r0, .Lheadroom
+-		addcc	r0, r0, pc
+-		cmpcc	r4, r0
+-		orrcc	r4, r4, #1		@ remember we skipped cache_on
+-		blcs	cache_on
++		/*
++		 * On Exynos 4412 with Samsung S-BOOT, bypass decompressor cache_on
++		 * because S-BOOT has incompatible MMU/cache state at 0x40004000.
++		 * Decompressor runs cleanly and safely with MMU off.
++		 */
++		orr	r4, r4, #1		@ mark cache_on skipped
+ 
+ restart:	adr	r0, LC1
+ 		ldr	sp, [r0]
+@@ -614,11 +607,11 @@
+ 		/*
+ 		 * Did we skip the cache setup earlier?
+ 		 * That is indicated by the LSB in r4.
+-		 * Do it now if so.
++		 * On Exynos 4412, we keep cache off throughout decompression.
+ 		 */
+ 		tst	r4, #1
+ 		bic	r4, r4, #1
+-		blne	cache_on
++		/* blne	cache_on */
+ 
+ /*
+  * The C runtime environment should now be setup sufficiently.

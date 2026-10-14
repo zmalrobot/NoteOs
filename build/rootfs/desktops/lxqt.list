@@ -1,0 +1,55 @@
+# ==============================================================================
+# rootfs/desktops/lxqt.list
+# Ambiente Desktop LXQt completo + Applicazioni di Base per GT-N8000 (armhf)
+# Include tutti i componenti di lxqt-core e i Depends del metapacchetto lxqt,
+# evitando i Recommends pesanti (firefox, thunderbird, smplayer, quassel).
+# ==============================================================================
+
+# Sessione, Pannello, Runner, Configurazione, Amministrazione, Energia e PolicyKit
+lxqt-core
+lxqt-session
+lxqt-panel
+lxqt-runner
+lxqt-config
+lxqt-admin
+lxqt-about
+lxqt-branding-debian
+lxqt-openssh-askpass
+lxqt-sudo
+lxqt-powermanagement
+lxqt-policykit
+lxqt-notificationd
+lxqt-globalkeys
+lxqt-qtplugin
+lxqt-themes
+
+# Window Manager e Display Manager
+openbox
+obconf-qt
+sddm
+sddm-theme-debian-maui
+qtvirtualkeyboard-plugin
+
+# Integrazione Rete, Audio e Bluetooth
+nm-tray
+network-manager-gnome
+pavucontrol-qt
+blueman
+
+# Applicazioni di Base LXQt (File manager, Terminale, Archivi, Screenshot, Appunti, Processi, Editor, Immagini)
+pcmanfm-qt
+gvfs
+gvfs-backends
+udisks2
+upower
+qterminal
+lxqt-archiver
+unzip
+p7zip-full
+screengrab
+qlipper
+qps
+galculator
+featherpad
+lximage-qt
+onboard

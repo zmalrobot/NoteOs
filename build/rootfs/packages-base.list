@@ -1,0 +1,91 @@
+# ==============================================================================
+# rootfs/packages-base.list
+# Pacchetti dell'immagine base NoteOS 1.0 (basata su Debian 12 Bookworm armhf)
+# Include sistema core, rete Wi-Fi/BT, audio ALSA/PipeWire, Xorg + Lima 3D,
+# Plymouth boot splash, tema scuro GTK/Qt e dipendenze per il wizard noteos-setup.
+# Il desktop completo (LXQt o KDE Plasma) viene scelto e installato dal wizard.
+# ==============================================================================
+
+# Sistema Core & Init
+apt
+gpgv
+debian-archive-keyring
+lsb-release
+systemd
+systemd-sysv
+systemd-timesyncd
+udev
+dbus
+dbus-x11
+sudo
+locales
+tzdata
+ca-certificates
+kmod
+e2fsprogs
+parted
+util-linux
+procps
+psmisc
+iproute2
+net-tools
+iputils-ping
+curl
+wget
+nano
+htop
+zram-tools
+
+# Animazione di Avvio Grafica (Plymouth + modulo script)
+plymouth
+plymouth-themes
+plymouth-label
+
+# Rete Wi-Fi, Bluetooth e Firmware libero/redistribuibile Debian
+network-manager
+wpasupplicant
+wireless-regdb
+iw
+rfkill
+bluez
+bluez-tools
+firmware-brcm80211
+openssh-server
+
+# Audio (ALSA + PipeWire / PulseAudio compat)
+alsa-utils
+alsa-ucm-conf
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+
+# Server Grafico Xorg, Accelerazione 3D Mali-400 (Mesa Lima), Input Touch e Sensori
+xserver-xorg-core
+xserver-xorg-video-modesetting
+xserver-xorg-input-libinput
+x11-xserver-utils
+xinit
+libgl1-mesa-dri
+libegl1-mesa
+libgles2-mesa
+mesa-utils
+libinput-tools
+iio-sensor-proxy
+
+# Ambiente Kiosk di Primo Avvio (Wizard Touch PyQt5 + Tastiera Virtuale Onboard + Tema Scuro)
+openbox
+python3
+python3-pyqt5
+python3-dbus
+onboard
+at-spi2-core
+dconf-cli
+gnome-themes-extra
+fonts-dejavu-core
+fonts-noto-core
+fonts-noto-color-emoji
+adwaita-icon-theme
+breeze-icon-theme
+qtvirtualkeyboard-plugin
+lsb-release

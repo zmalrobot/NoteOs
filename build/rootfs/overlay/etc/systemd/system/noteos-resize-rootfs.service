@@ -1,0 +1,17 @@
+[Unit]
+Description=NoteOS — Ridimensionamento automatico della partizione root ext4 al primo avvio
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=local-fs.target noteos-firstboot.service
+ConditionPathExists=!/var/lib/noteos/rootfs.resized
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+ExecStart=/bin/sh -c 'ROOT_DEV=$(findmnt -n -o SOURCE /); resize2fs "$ROOT_DEV" && mkdir -p /var/lib/noteos && df -h / > /var/lib/noteos/rootfs.resized'
+
+[Install]
+WantedBy=multi-user.target
+

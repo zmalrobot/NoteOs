@@ -1,0 +1,25 @@
+# Plymouth Script per animazione a loop infinito NoteOS
+Window.GetMaxWidth = fun () { return Window.GetWidth(); };
+Window.GetMaxHeight = fun () { return Window.GetHeight(); };
+
+num_frames = 30;
+for (i = 0; i < num_frames; i++) {
+  if (i < 10)
+    filename = "000" + i + ".png";
+  else
+    filename = "00" + i + ".png";
+  anim_images[i] = Image(filename);
+}
+
+anim_sprite = Sprite();
+progress = 0;
+
+fun refresh_callback () {
+  frame_index = Math.Int(progress) % num_frames;
+  anim_sprite.SetImage(anim_images[frame_index]);
+  anim_sprite.SetX(0);
+  anim_sprite.SetY(0);
+  progress = progress + 0.5; # Regola velocità (circa 30 FPS se il refresh è a 60Hz)
+}
+
+Plymouth.SetRefreshFunction(refresh_callback);

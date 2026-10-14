@@ -1,0 +1,5 @@
+# Configurazione ZRAM per GT-N8000 (2 GiB RAM -> ~1 GiB ZRAM swap compresso lz4)
+ALGO=lz4
+PERCENT=50
+PRIORITY=100
+

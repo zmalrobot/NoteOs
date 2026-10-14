@@ -1,0 +1,9 @@
+# NoteOS Plymouth Theme
+[Plymouth Theme]
+Name=NoteOS Elegant
+Description=Boot animation for Galaxy Note N8000 Debian
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/noteos
+ScriptFile=/usr/share/plymouth/themes/noteos/noteos.script

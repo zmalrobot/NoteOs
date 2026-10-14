@@ -1,0 +1,42 @@
+# ==============================================================================
+# rootfs/desktops/kde.list
+# Ambiente Desktop KDE Plasma 5.27 + Applicazioni di Base per GT-N8000 (armhf)
+# Basato su kde-plasma-desktop + componenti di sistema essenziali.
+# Nota: Baloo file indexer viene disabilitato di default per preservare RAM/CPU.
+# ==============================================================================
+
+# Metapacchetto base e Sessione Plasma X11
+kde-plasma-desktop
+plasma-desktop
+plasma-workspace
+kwin-x11
+sddm
+sddm-theme-breeze
+kde-config-sddm
+qtvirtualkeyboard-plugin
+
+# Impostazioni, Rete, Audio, Energia, Schermo, Bluetooth, Portali e Polkit
+systemsettings
+kscreen
+powerdevil
+plasma-nm
+plasma-pa
+bluedevil
+polkit-kde-agent-1
+kio-extras
+xdg-desktop-portal-kde
+milou
+udisks2
+upower
+
+# Applicazioni di Base KDE (File manager, Terminale, Screenshot, Archivi, Info, Calcolatrice, Monitor)
+dolphin
+konsole
+kde-spectacle
+ark
+unzip
+p7zip-full
+kinfocenter
+kcalc
+plasma-systemmonitor
+onboard

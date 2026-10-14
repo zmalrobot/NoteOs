@@ -1,0 +1,11 @@
+--- a/arch/arm/boot/compressed/atags_to_fdt.c
++++ b/arch/arm/boot/compressed/atags_to_fdt.c
+@@ -193,7 +193,7 @@
+ 					cpu_to_fdt32(atag->u.mem.size);
+ 			}
+ 
+-		} else if (atag->hdr.tag == ATAG_INITRD2) {
++		} else if (atag->hdr.tag == ATAG_INITRD2 || atag->hdr.tag == ATAG_INITRD) {
+ 			uint32_t initrd_start, initrd_size;
+ 			initrd_start = atag->u.initrd.start;
+ 			initrd_size = atag->u.initrd.size;

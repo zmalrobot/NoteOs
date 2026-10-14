@@ -1,0 +1,21 @@
+label: gpt
+label-id: 52444E41-494F-2044-4D4D-43204449534B
+device: /dev/block/mmcblk0
+unit: sectors
+first-lba: 34
+last-lba: 30777310
+sector-size: 512
+
+/dev/block/mmcblk0p1 : start=        8192, size=        8192, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-424F-544130000000, name="BOTA0"
+/dev/block/mmcblk0p2 : start=       16384, size=        8192, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-424F-544131000000, name="BOTA1"
+/dev/block/mmcblk0p3 : start=       24576, size=       40960, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-4546-530000000000, name="EFS"
+/dev/block/mmcblk0p4 : start=       65536, size=       16384, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-5041-52414D000000, name="PARAM"
+/dev/block/mmcblk0p5 : start=       81920, size=       16384, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-424F-4F5400000000, name="BOOT"
+/dev/block/mmcblk0p6 : start=       98304, size=       16384, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-5245-434F56455259, name="RECOVERY"
+/dev/block/mmcblk0p7 : start=      114688, size=       65536, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=52444E41-494F-2044-5241-44494F000000, name="RADIO"
+/dev/block/mmcblk0p8 : start=      180224, size=      204800, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=891FF2A3-BEC4-40BE-890B-1955DC8CBC28, name="CACHE"
+/dev/block/mmcblk0p9 : start=      385024, size=     7168000, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=9077EB96-081D-498D-94EA-EC34364D8B86, name="SYSTEM"
+/dev/block/mmcblk0p10 : start=     7553024, size=     1024000, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=4E95DC2E-EDB9-4821-91B7-A58A01C318A5, name="HIDDEN"
+/dev/block/mmcblk0p11 : start=     8577024, size=       16384, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=BDD105D2-F9A5-4AE6-BC3A-69E0A58EDD18, name="OTA"
+/dev/block/mmcblk0p12 : start=     8593408, size=    22175744, type=EBD0A0A2-B9E5-4433-87C0-68B6B72699C7, uuid=C4FD0C94-FB7B-4AEF-B16B-5BD4B55AD912, name="USERDATA"
+

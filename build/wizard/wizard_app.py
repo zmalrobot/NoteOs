@@ -25,6 +25,19 @@ import shutil
 import subprocess
 import sys
 import time
+import traceback
+
+def _global_exception_handler(exctype, value, tb):
+    err_str = "".join(traceback.format_exception(exctype, value, tb))
+    sys.stderr.write(f"UNHANDLED EXCEPTION in noteos-setup - {err_str}\n")
+    try:
+        with open("/var/log/noteos-setup-crash.log", "a") as f:
+            f.write(f"\n--- Crash at {time.ctime()} ---\n{err_str}\n")
+    except Exception:
+        pass
+    sys.__excepthook__(exctype, value, tb)
+
+sys.excepthook = _global_exception_handler
 
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QObject, QEvent, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath
@@ -577,6 +590,20 @@ class N8000SetupWizard(QMainWindow):
         self._go_to_step(self.state.get("step", 0), save=False)
 
         QApplication.instance().installEventFilter(self)
+
+        # Timer anti-standby: impedisce lo spegnimento o il blanking dello schermo durante il wizard
+        self.anti_sleep_timer = QTimer(self)
+        self.anti_sleep_timer.timeout.connect(self._prevent_screen_sleep)
+        self.anti_sleep_timer.start(45000)  # Ogni 45 secondi
+        self._prevent_screen_sleep()
+
+    def _prevent_screen_sleep(self):
+        if not getattr(self.args, "dry_run", False):
+            try:
+                subprocess.run(["xset", "s", "reset"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["xset", "s", "off", "-dpms"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except Exception:
+                pass
 
     def t(self, key, **kwargs):
         lang = self.state.get("lang", "en")
@@ -1941,11 +1968,19 @@ class N8000SetupWizard(QMainWindow):
         if idx == 1:
             if self.wifi_list.count() == 0:
                 self._scan_wifi()
-            ok, info = self._check_internet()
+            ok, info, is_local_only = self._check_internet()
             if ok and not self.args.dry_run:
                 self.state["net_connected"] = True
                 self.state["net_name"] = info
-            self._update_wifi_banner()
+                self._update_wifi_banner()
+            elif is_local_only:
+                self.lbl_wifi_status.setText(f"⚠️ {info}.\nPuoi proseguire al passo successivo se la connessione è attiva.")
+                self.lbl_wifi_status.setStyleSheet("color: #d29922; font-size: 15px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
+                self.state["net_connected"] = True
+                self.state["net_name"] = self.state.get("wifi_ssid") or "Wi-Fi"
+                self.btn_next.setEnabled(True)
+            else:
+                self._update_wifi_banner(err_msg=info if self.state.get("wifi_ssid") else None)
         else:
             self.btn_next.setEnabled(True)
 

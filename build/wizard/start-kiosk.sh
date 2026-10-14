@@ -14,10 +14,13 @@ export QT_SCALE_FACTOR=1
 
 mkdir -p /var/lib/noteos
 
-# Termina Plymouth subito prima che Xorg acquisisca il DRM master (/dev/dri/card0)
+# Termina Plymouth rilasciando il DRM master ma mantenendo lo splash screen attivo fino a Xorg
 if command -v plymouth >/dev/null 2>&1; then
-    plymouth quit 2>/dev/null || true
+    plymouth quit --retain-splash 2>/dev/null || true
 fi
+
+# Disattiva console blanking sul kernel virtual terminal (VT1)
+TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
 cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
 #!/bin/sh
@@ -56,5 +59,5 @@ python3 /usr/share/noteos-setup/wizard_app.py "$@"
 XINIT_EOF
 chmod +x /tmp/noteos-kiosk-xinitrc
 
-exec xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -quiet
+exec xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -dpms -quiet
 

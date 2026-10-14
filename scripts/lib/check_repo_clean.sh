@@ -117,9 +117,9 @@ while IFS= read -r file; do
             ;;
     esac
     for pat in "${SENSITIVE_PATTERNS[@]}"; do
-        if grep -nEi "${pat}" "${REPO_ROOT}/${file}" >/dev/null 2>&1; then
+        if grep -nEi -e "${pat}" "${REPO_ROOT}/${file}" >/dev/null 2>&1; then
             log_error "Sensitive data pattern detected in: ${file}"
-            grep -nEi "${pat}" "${REPO_ROOT}/${file}" | head -n 3 >&2
+            grep -nEi -e "${pat}" "${REPO_ROOT}/${file}" | head -n 3 >&2
             FAILED=1
         fi
     done

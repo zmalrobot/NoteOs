@@ -33,7 +33,9 @@ iputils-ping
 curl
 wget
 nano
-htop
+btop
+earlyoom
+fio
 zram-tools
 
 # Animazione di Avvio Grafica (Plymouth + modulo script)

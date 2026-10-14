@@ -1,0 +1,8 @@
+#!/bin/sh
+# ==============================================================================
+# NoteOS — Hardware Safety Guard for Samsung Galaxy Note 10.1 (GT-N8000)
+# Permanently intercepts and disables fstrim to prevent VTU00M 0xF1 eMMC CMD38
+# silicon brickbug.
+# ==============================================================================
+echo "NoteOS hardware safety: fstrim is permanently disabled due to Samsung VTU00M 0xF1 eMMC CMD38 brickbug." >&2
+exit 0

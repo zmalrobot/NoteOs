@@ -17,15 +17,19 @@ mkdir -p /var/lib/noteos
 # Assicura che Plymouth venga chiuso se lo script termina inaspettatamente
 trap 'plymouth quit --retain-splash 2>/dev/null || true' EXIT
 
-# Ensure display panel backlight is turned on at full brightness immediately
+# Ensure framebuffer and backlight are explicitly unblanked at full brightness
+for fb in /sys/class/graphics/fb*; do
+    if [ -d "$fb" ] && [ -f "$fb/blank" ]; then
+        echo 0 > "$fb/blank" 2>/dev/null || true
+    fi
+done
 for b in /sys/class/backlight/*; do
     if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
         cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
     fi
 done
 
-# Disattiva console blanking sui terminali virtuali (VT1 e VT7)
-TERM=linux setterm --blank 0 --powerdown 0 </dev/tty7 >/dev/tty7 2>/dev/null || true
+# Disattiva console blanking sul terminale virtuale attivo (VT1)
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
 cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
@@ -34,9 +38,14 @@ xset dpms force on 2>/dev/null || true
 xset s off 2>/dev/null || true
 xset -dpms 2>/dev/null || true
 xset s noblank 2>/dev/null || true
-xrandr --output VGA-1 --auto 2>/dev/null || true
+xrandr --auto 2>/dev/null || true
 
 # Ensure display panel backlight is turned on at full brightness
+for fb in /sys/class/graphics/fb*; do
+    if [ -d "$fb" ] && [ -f "$fb/blank" ]; then
+        echo 0 > "$fb/blank" 2>/dev/null || true
+    fi
+done
 for b in /sys/class/backlight/*; do
     if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
         cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
@@ -85,24 +94,24 @@ wait_plymouthd_gone() {
     # plymouthd exits asynchronously after "plymouth quit": wait until it released the DRM device
     for _ in $(seq 1 25); do
         pidof plymouthd >/dev/null 2>&1 || return 0
-        sleep 0.2
+        sleep 0.1
     done
     return 0
 }
 
-# Release the DRM master held by Plymouth but keep the splash pixels on screen.
-# Without this Xorg/modesetting fails with "drmSetMaster failed: Device or resource busy".
-plymouth deactivate 2>/dev/null || true
-sleep 0.5
+# Release DRM master cleanly before Xorg starts, keeping splash pixels on screen.
+# This prevents modesetting drmSetMaster lockups and VT-switching deadlocks.
+plymouth quit --retain-splash 2>/dev/null || true
+wait_plymouthd_gone
 
 # NOTE: no "exec" here, otherwise the EXIT trap above would never run.
-# Xorg runs on vt7 (standard graphics VT) to isolate display from kernel console/plymouth on vt1.
+# Xorg runs on vt1 (the active console VT) to eliminate VT-switch deadlocks.
 rc=1
 for attempt in 1 2 3; do
     started=$(date +%s)
-    xinit /tmp/noteos-kiosk-xinitrc -- :0 vt7 -nolisten tcp -s 0 -quiet && rc=0 || rc=$?
+    xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -quiet && rc=0 || rc=$?
     [ "${rc}" -eq 0 ] && break
-    # X died quickly (e.g. DRM still busy): drop the splash completely and retry
+    # X died quickly: ensure DRM master is completely released and retry
     if [ $(( $(date +%s) - started )) -lt 20 ]; then
         echo "noteos-kiosk: X exited with ${rc} after <20s (attempt ${attempt}), retrying" >&2
         plymouth quit --retain-splash 2>/dev/null || true
@@ -115,4 +124,3 @@ done
 
 kill "${WATCHDOG_PID}" 2>/dev/null || true
 exit "${rc}"
-

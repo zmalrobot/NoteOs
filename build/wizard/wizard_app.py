@@ -2350,6 +2350,11 @@ def main():
     QApplication.flush()
     QApplication.processEvents()
     if not args.dry_run and not args.test_screenshots:
+        try:
+            with open("/sys/class/graphics/fb0/blank", "w") as f:
+                f.write("0\n")
+        except Exception:
+            pass
         subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 

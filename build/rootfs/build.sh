@@ -53,8 +53,6 @@ else
         --skip=check/qemu \
         --architectures="${DEVICE_ARCH}" \
         --components="main,contrib,non-free,non-free-firmware" \
-        --setup-hook='mkdir -p "$1/dev" "$1/proc" && mount --rbind /dev "$1/dev" && mount --make-rslave "$1/dev" && mount -t proc proc "$1/proc"' \
-        --cleanup-hook='umount -lf "$1/proc" "$1/dev" 2>/dev/null || true' \
         --include="${PKG_CSV}" \
         bookworm \
         "${ROOTFS_WORK}" \
@@ -66,14 +64,16 @@ else
 fi
 
 cleanup_mounts() {
+    umount -lf "${ROOTFS_WORK}/sys" 2>/dev/null || true
     umount -lf "${ROOTFS_WORK}/proc" 2>/dev/null || true
     umount -lf "${ROOTFS_WORK}/dev" 2>/dev/null || true
 }
 trap cleanup_mounts EXIT
-mkdir -p "${ROOTFS_WORK}/dev" "${ROOTFS_WORK}/proc"
+mkdir -p "${ROOTFS_WORK}/dev" "${ROOTFS_WORK}/proc" "${ROOTFS_WORK}/sys"
 mount --rbind /dev "${ROOTFS_WORK}/dev"
 mount --make-rslave "${ROOTFS_WORK}/dev"
 mount -t proc proc "${ROOTFS_WORK}/proc"
+mount -t sysfs sys "${ROOTFS_WORK}/sys"
 
 # 1. Build and install noteos-branding package
 echo "--> Building and installing noteos-branding debian package..."
@@ -141,6 +141,8 @@ fi
 # 5. Configure locale, timezone, security hardening, and services
 echo "--> Configuring base system services and security hardening..."
 chroot "${ROOTFS_WORK}" /bin/sh -c '
+    export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    mkdir -p /etc/default
     echo "noteos" > /etc/hostname
     cat << "HOSTS_EOF" > /etc/hosts
 127.0.0.1   localhost
@@ -154,6 +156,7 @@ HOSTS_EOF
     if ! grep -q "^it_IT.UTF-8" /etc/locale.gen 2>/dev/null; then
         echo "it_IT.UTF-8 UTF-8" >> /etc/locale.gen
     fi
+    mkdir -p /usr/lib/locale
     locale-gen
     echo "LANG=en_US.UTF-8" > /etc/default/locale
     ln -sf /usr/share/zoneinfo/UTC /etc/localtime
@@ -169,17 +172,29 @@ HOSTS_EOF
     passwd -l root
     systemctl disable ssh.service 2>/dev/null || true
     systemctl disable ssh.socket 2>/dev/null || true
+    systemctl disable ModemManager.service 2>/dev/null || true
+    systemctl disable cups.service 2>/dev/null || true
+    systemctl disable avahi-daemon.service 2>/dev/null || true
+    systemctl mask fstrim.timer fstrim.service 2>/dev/null || true
+    rm -f /etc/systemd/system/timers.target.wants/fstrim.timer
+    rm -f /var/lib/systemd/deb-systemd-helper-enabled/timers.target.wants/fstrim.timer
 
     systemctl enable NetworkManager.service 2>/dev/null || true
     systemctl enable systemd-timesyncd.service 2>/dev/null || true
     systemctl enable bluetooth.service 2>/dev/null || true
     systemctl enable zramswap.service 2>/dev/null || true
+    systemctl enable earlyoom.service 2>/dev/null || true
     systemctl enable noteos-resize-rootfs.service 2>/dev/null || true
     if [ -f /etc/systemd/system/noteos-firstboot.service ]; then
         systemctl enable noteos-firstboot.service 2>/dev/null || true
     fi
     dconf update 2>/dev/null || true
 '
+
+# Patch zramswap stop to prevent failure when zram is built-in kernel driver
+if [ -f "${ROOTFS_WORK}/usr/sbin/zramswap" ]; then
+    sed -i 's/modprobe -r zram || elog/modprobe -r zram 2>\/dev\/null || true #/g' "${ROOTFS_WORK}/usr/sbin/zramswap" || true
+fi
 
 # 6. Generate package manifest with exact versions
 chroot "${ROOTFS_WORK}" dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort > "${OUT_DIR}/packages.manifest"

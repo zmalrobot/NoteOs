@@ -79,7 +79,7 @@ OB_EOF
 
 # Avvia window manager leggero senza decorazioni
 openbox --config-file ~/.config/openbox/rc.xml &
-sleep 0.3
+sleep 0.1
 
 # Avvia il wizard grafico di NoteOS a schermo intero (1280x800)
 python3 /usr/share/noteos-setup/wizard_app.py "$@"
@@ -87,7 +87,7 @@ XINIT_EOF
 chmod +x /tmp/noteos-kiosk-xinitrc
 
 # Watchdog: the boot splash must never stay on screen forever, whatever happens.
-( sleep 90; plymouth quit --retain-splash 2>/dev/null || true ) &
+( sleep 20; plymouth quit --retain-splash 2>/dev/null || true ) &
 WATCHDOG_PID=$!
 
 wait_plymouthd_gone() {
@@ -112,11 +112,11 @@ for attempt in 1 2 3; do
     xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -quiet && rc=0 || rc=$?
     [ "${rc}" -eq 0 ] && break
     # X died quickly: ensure DRM master is completely released and retry
-    if [ $(( $(date +%s) - started )) -lt 20 ]; then
-        echo "noteos-kiosk: X exited with ${rc} after <20s (attempt ${attempt}), retrying" >&2
+    if [ $(( $(date +%s) - started )) -lt 5 ]; then
+        echo "noteos-kiosk: X exited with ${rc} after <5s (attempt ${attempt}), retrying" >&2
         plymouth quit --retain-splash 2>/dev/null || true
         wait_plymouthd_gone
-        sleep 1
+        sleep 0.5
     else
         break
     fi

@@ -381,6 +381,25 @@ class WifiScanWorker(QThread):
 
 
 # ==============================================================================
+# WORKER GENERICO: esegue una funzione bloccante fuori dal thread GUI
+# ==============================================================================
+class CallableWorker(QThread):
+    done_sig = pyqtSignal(object)
+
+    def __init__(self, fn):
+        super().__init__()
+        self._fn = fn
+
+    def run(self):
+        try:
+            res = self._fn()
+        except Exception as exc:  # delivered to the GUI thread, never swallowed silently
+            res = exc
+        self.done_sig.emit(res)
+
+
+
+# ==============================================================================
 # WORKER THREAD DI INSTALLAZIONE (IDEMPOTENTE E CON RIPROVA)
 # ==============================================================================
 class InstallWorker(QThread):
@@ -916,7 +935,8 @@ class N8000SetupWizard(QMainWindow):
             if self.state.get("vkbd_enabled", True):
                 self.touch_kbd.show()
         elif event.type() == QEvent.MouseButtonPress:
-            if isinstance(obj, QAbstractButton):
+            if isinstance(obj, (QAbstractButton, QListWidget, QComboBox)) or \
+                    isinstance(getattr(obj, 'parent', lambda: None)(), (QListWidget, QComboBox)):
                 if not self.touch_kbd.isAncestorOf(obj) and obj != self.btn_toggle_kbd:
                     self.touch_kbd.hide()
         return super().eventFilter(obj, event)
@@ -1342,20 +1362,75 @@ class N8000SetupWizard(QMainWindow):
 
         return False, "Nessun indirizzo IP ricevuto dal router (timeout DHCP o associazione non riuscita)", False
 
+    def _wifi_log(self, msg):
+        """Append a diagnostic line (never a password) to /var/lib/noteos/wifi.log."""
+        try:
+            with open(os.path.join(self.state_dir, "wifi.log"), "a", encoding="utf-8") as f:
+                f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {msg}\n")
+        except Exception:
+            pass
+
+    def _start_net_check(self):
+        """Run _check_internet off the GUI thread (inline in --dry-run, where it is instant)."""
+        if self.args.dry_run:
+            self._on_net_check_done(self._check_internet(wait_dhcp=False))
+            return
+        if getattr(self, "net_worker", None) and self.net_worker.isRunning():
+            return
+        self.net_worker = CallableWorker(lambda: self._check_internet(wait_dhcp=False))
+        self.net_worker.done_sig.connect(self._on_net_check_done)
+        self.net_worker.start()
+
+    def _on_net_check_done(self, res):
+        # Ignore stale results: user left the Wi-Fi screen or a connection attempt is running
+        if self.stack.currentIndex() != 1:
+            return
+        if getattr(self, "wifi_worker", None) and self.wifi_worker.isRunning():
+            return
+        if isinstance(res, Exception):
+            return
+        ok, info, is_local_only = res
+        if ok and not self.args.dry_run:
+            self.state["net_connected"] = True
+            self.state["net_name"] = info
+            self._update_wifi_banner()
+        elif is_local_only:
+            self.lbl_wifi_status.setText(f"⚠️ {info}.\nPuoi proseguire al passo successivo se la connessione è attiva.")
+            self.lbl_wifi_status.setStyleSheet("color: #d29922; font-size: 15px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
+            self.state["net_connected"] = True
+            self.state["net_name"] = self.state.get("wifi_ssid") or "Wi-Fi"
+            self.btn_next.setEnabled(True)
+        else:
+            self._update_wifi_banner(err_msg=None)
+
     def _connect_wifi_and_check(self):
         ssid = self.inp_hidden_ssid.text().strip() if self.chk_hidden_wifi.isChecked() else self.state.get("wifi_ssid", "")
         pw = self.inp_wifi_pass.text()
+        hidden = self.chk_hidden_wifi.isChecked()
 
         if not ssid:
             self._update_wifi_banner(err_msg="Seleziona una rete Wi-Fi dall'elenco prima di connetterti")
+            return
+        if getattr(self, "wifi_worker", None) and self.wifi_worker.isRunning():
             return
 
         self.touch_kbd.hide()
         self.lbl_wifi_status.setText(f"⏳ Connessione a '{ssid}' in corso...")
         self.lbl_wifi_status.setStyleSheet("color: #58a6ff; font-size: 17px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
         self.btn_connect_wifi.setEnabled(False)
-        QApplication.processEvents()
 
+        if self.args.dry_run:
+            # Instant in simulation: keep it synchronous (used by --test-screenshots)
+            self._on_wifi_connect_done(ssid, self._wifi_connect_job(ssid, pw, hidden))
+            return
+
+        # nmcli/DHCP/curl can take up to ~60 s: never run them on the GUI thread
+        self.wifi_worker = CallableWorker(lambda: self._wifi_connect_job(ssid, pw, hidden))
+        self.wifi_worker.done_sig.connect(lambda res: self._on_wifi_connect_done(ssid, res))
+        self.wifi_worker.start()
+
+    def _wifi_connect_job(self, ssid, pw, hidden):
+        """Worker-thread body. Must not touch any widget. Returns (ok, info, is_local_only, err_detail)."""
         err_detail = None
 
         if not self.args.dry_run:
@@ -1380,7 +1455,7 @@ class N8000SetupWizard(QMainWindow):
                     "wifi-sec.psk", pw,
                     "wifi-sec.pmf", "1",  # 1 = disabled
                 ]
-            if self.chk_hidden_wifi.isChecked():
+            if hidden:
                 add_cmd += ["802-11-wireless.hidden", "yes"]
 
             add_res = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -1389,6 +1464,7 @@ class N8000SetupWizard(QMainWindow):
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 if up_res.returncode != 0:
                     err_detail = up_res.stderr.strip() or up_res.stdout.strip()
+                    self._wifi_log(f"up failed (stage 1): {err_detail}")
                     # Stage 2: Fallback to pure 2.4 GHz band (bg) for routers with dual-band steering issues
                     if pw:
                         subprocess.run(["nmcli", "connection", "modify", ssid, "802-11-wireless.band", "bg"],
@@ -1399,12 +1475,20 @@ class N8000SetupWizard(QMainWindow):
                             err_detail = None
                         else:
                             err_detail = up_res2.stderr.strip() or err_detail
+                            self._wifi_log(f"up failed (stage 2, 2.4 GHz): {err_detail}")
             else:
                 err_detail = add_res.stderr.strip() or "Failed to create connection profile"
-
-        self.btn_connect_wifi.setEnabled(True)
+                self._wifi_log(f"add failed: {err_detail}")
 
         ok, info, is_local_only = self._check_internet(wait_dhcp=True)
+        return ok, info, is_local_only, err_detail
+
+    def _on_wifi_connect_done(self, ssid, res):
+        self.btn_connect_wifi.setEnabled(True)
+        if isinstance(res, Exception):
+            res = (False, str(res), False, str(res))
+        ok, info, is_local_only, err_detail = res
+
         self.state["net_connected"] = ok
         self.state["net_name"] = info if ok else ""
 
@@ -2040,19 +2124,9 @@ class N8000SetupWizard(QMainWindow):
         if idx == 1:
             if self.wifi_list.count() == 0:
                 self._scan_wifi()
-            ok, info, is_local_only = self._check_internet(wait_dhcp=False)
-            if ok and not self.args.dry_run:
-                self.state["net_connected"] = True
-                self.state["net_name"] = info
-                self._update_wifi_banner()
-            elif is_local_only:
-                self.lbl_wifi_status.setText(f"⚠️ {info}.\nPuoi proseguire al passo successivo se la connessione è attiva.")
-                self.lbl_wifi_status.setStyleSheet("color: #d29922; font-size: 15px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
-                self.state["net_connected"] = True
-                self.state["net_name"] = self.state.get("wifi_ssid") or "Wi-Fi"
-                self.btn_next.setEnabled(True)
-            else:
-                self._update_wifi_banner(err_msg=None)
+            # Never block the GUI thread here: the check may run several curl/ping commands
+            self._update_wifi_banner(err_msg=None)
+            self._start_net_check()
         else:
             self.btn_next.setEnabled(True)
 
@@ -2193,7 +2267,7 @@ def main():
     # Release Plymouth only after the first GUI frame has actually rendered on screen
     QApplication.processEvents()
     if not args.dry_run and not args.test_screenshots:
-        subprocess.run(["plymouth", "quit"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run(["plymouth", "quit", "--retain-splash"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
     if args.test_screenshots:
         QTimer.singleShot(200, lambda: run_automated_screenshots(win, args.test_screenshots))

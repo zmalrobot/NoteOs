@@ -25,6 +25,8 @@ cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
 xset s off
 xset -dpms
 xset s noblank
+# Same colour as the Plymouth background: no black gap before the first Qt frame
+xsetroot -solid '#161b22' 2>/dev/null || true
 
 # Configura Openbox per non mostrare decorazioni né cornici (modalità kiosk a tutto schermo)
 mkdir -p ~/.config/openbox
@@ -57,5 +59,41 @@ python3 /usr/share/noteos-setup/wizard_app.py "$@"
 XINIT_EOF
 chmod +x /tmp/noteos-kiosk-xinitrc
 
-exec xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -dpms -quiet
+# Watchdog: the boot splash must never stay on screen forever, whatever happens.
+( sleep 90; plymouth quit 2>/dev/null || true ) &
+WATCHDOG_PID=$!
+
+wait_plymouthd_gone() {
+    # plymouthd exits asynchronously after "plymouth quit": wait until it released the DRM device
+    for _ in $(seq 1 25); do
+        pidof plymouthd >/dev/null 2>&1 || return 0
+        sleep 0.2
+    done
+    return 0
+}
+
+# Release the DRM master held by Plymouth but keep the splash pixels on screen.
+# Without this Xorg/modesetting fails with "drmSetMaster failed: Device or resource busy".
+plymouth deactivate 2>/dev/null || true
+sleep 0.5
+
+# NOTE: no "exec" here, otherwise the EXIT trap above would never run.
+rc=1
+for attempt in 1 2 3; do
+    started=$(date +%s)
+    xinit /tmp/noteos-kiosk-xinitrc -- :0 vt1 -nolisten tcp -s 0 -dpms -quiet && rc=0 || rc=$?
+    [ "${rc}" -eq 0 ] && break
+    # X died quickly (e.g. DRM still busy): drop the splash completely and retry
+    if [ $(( $(date +%s) - started )) -lt 20 ]; then
+        echo "noteos-kiosk: X exited with ${rc} after <20s (attempt ${attempt}), retrying" >&2
+        plymouth quit 2>/dev/null || true
+        wait_plymouthd_gone
+        sleep 1
+    else
+        break
+    fi
+done
+
+kill "${WATCHDOG_PID}" 2>/dev/null || true
+exit "${rc}"
 

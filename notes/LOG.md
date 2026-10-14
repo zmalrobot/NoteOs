@@ -41,3 +41,11 @@ This document records the empirical chronology, technical hypotheses, verificati
 - TWRP Recovery partition (`mmcblk0p6`) verified completely untouched (`894508b9f5cae24e047c7fdb1fb6d7f011f13ce9b36e5c844e9efd2b91cc6099`).
 - Rootfs filesystem verified with `e2fsck -f -n /dev/block/mmcblk0p8`: 52,451 files, 0 errors.
 
+### 7. Public Open-Source Repository Preparation (Gate G7/G8) — [VERIFIED]
+- Private backups safely relocated to `../NoteOs-private/backup/` with verified checksum manifest (`BACKUP_VERIFIED_SHA256.txt`).
+- Clean repository structure created at `../NoteOs` with dual GPL-2.0 / MIT licensing.
+- Cleanliness and confidentiality audit (`scripts/lib/check_repo_clean.sh`) passed with 0 errors: zero proprietary blobs, zero personal data leaks, no files > 50 MiB (total git repository size: 66 MiB).
+- Pre-commit hook installed via `scripts/00_check_prerequisites.sh --install-hooks`.
+- Commits prepared on `main` branch under pseudonym author identity `zmalrobot <zmalrobot@users.noreply.github.com>`.
+
+

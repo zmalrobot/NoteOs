@@ -169,6 +169,8 @@ HOSTS_EOF
     rm -f /etc/ssh/sshd_config.d/99-n8000-debug.conf
     rm -f /etc/network/interfaces.d/usb0
     rm -f /etc/NetworkManager/system-connections/usb0.nmconnection
+    mkdir -p /etc/NetworkManager/system-connections
+    chmod 0700 /etc/NetworkManager/system-connections
     passwd -l root
     systemctl disable ssh.service 2>/dev/null || true
     systemctl disable ssh.socket 2>/dev/null || true
@@ -206,6 +208,8 @@ rm -f "${ROOTFS_WORK}/etc/ssh/ssh_host_"*
 : > "${ROOTFS_WORK}/etc/machine-id"
 rm -f "${ROOTFS_WORK}/var/lib/dbus/machine-id"
 rm -rf "${ROOTFS_WORK}/etc/NetworkManager/system-connections/"*
+mkdir -p "${ROOTFS_WORK}/etc/NetworkManager/system-connections"
+chmod 0700 "${ROOTFS_WORK}/etc/NetworkManager/system-connections"
 rm -rf "${ROOTFS_WORK}/root/.bash_history"
 rm -rf "${ROOTFS_WORK}/home/"*
 

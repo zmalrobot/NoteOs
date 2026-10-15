@@ -25,6 +25,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 import urllib.error
@@ -1550,7 +1551,9 @@ class N8000SetupWizard(QMainWindow):
             return
         selected_idx = 0
         current_ssid = self.state.get("wifi_ssid")
+        self.wifi_security = {}
         for i, (ssid, sig, sec, in_use) in enumerate(nets):
+            self.wifi_security[ssid] = sec
             mark = "✅ [CONNESSA] " if in_use else ""
             item = QListWidgetItem(f"📶  {mark}{ssid}   —   {sig}%   [{sec}]")
             item.setData(Qt.UserRole, ssid)
@@ -1561,11 +1564,19 @@ class N8000SetupWizard(QMainWindow):
                 selected_idx = i
         self.wifi_list.setCurrentRow(selected_idx)
         self.state["wifi_ssid"] = self.wifi_list.item(selected_idx).data(Qt.UserRole)
+        self._on_wifi_selected(self.wifi_list.item(selected_idx))
 
     def _on_wifi_selected(self, item):
         data = item.data(Qt.UserRole)
         if data:
             self.state["wifi_ssid"] = data
+            sec = getattr(self, "wifi_security", {}).get(data, "")
+            if sec and sec.upper() in ("OPEN", "NONE", "--"):
+                self.inp_wifi_pass.clear()
+                is_it = self.state.get("lang", "it") == "it"
+                self.inp_wifi_pass.setPlaceholderText("Rete aperta (nessuna password richiesta)" if is_it else "Open network (no password required)")
+            else:
+                self.inp_wifi_pass.setPlaceholderText(self.t("s2_pass_ph"))
 
     def _check_internet(self, wait_dhcp=False):
         """
@@ -1713,21 +1724,53 @@ class N8000SetupWizard(QMainWindow):
         else:
             self._update_wifi_banner(err_msg=None)
 
+    def _format_wifi_error(self, raw_err, ssid):
+        """Translates cryptic NetworkManager / nmcli error messages into human-friendly explanations."""
+        if not raw_err:
+            return "Errore sconosciuto durante la connessione Wi-Fi" if self.state.get("lang") == "it" else "Unknown error during Wi-Fi connection"
+        lower = raw_err.lower()
+        is_it = self.state.get("lang") == "it"
+        if ("not given" in lower and ("passwd-file" in lower or "password-file" in lower or "psk" in lower)) or \
+           any(k in lower for k in ("secrets were required", "4-way handshake", "psk not given", "pre-shared key may be incorrect", "auth failed", "unauthorized", "wrong-password", "bad password", "no-secrets", "invalid key")):
+            return "Password Wi-Fi non valida o autenticazione WPA fallita. Verifica la password e riprova." if is_it else "Invalid Wi-Fi password or WPA authentication failed. Please verify credentials."
+        if any(k in lower for k in ("not found", "could not be found", "no network with ssid", "no suitable device")):
+            return f"Rete Wi-Fi '{ssid}' non trovata o fuori portata. Verifica che sia accesa e riprova." if is_it else f"Wi-Fi network '{ssid}' not found or out of range. Check that it is powered on."
+        if "timeout" in lower:
+            return "Tempo scaduto durante l'associazione Wi-Fi. Verifica la distanza dal router e riprova." if is_it else "Connection attempt timed out. Check distance to router and retry."
+        if "property is invalid" in lower:
+            return "Parametri Wi-Fi non validi (la password deve contenere almeno 8 caratteri)." if is_it else "Invalid Wi-Fi parameters (password must be at least 8 characters)."
+        return raw_err
+
     def _connect_wifi_and_check(self):
         ssid = self.inp_hidden_ssid.text().strip() if self.chk_hidden_wifi.isChecked() else self.state.get("wifi_ssid", "")
         pw = self.inp_wifi_pass.text()
         hidden = self.chk_hidden_wifi.isChecked()
 
         if not ssid:
-            self._update_wifi_banner(err_msg="Seleziona una rete Wi-Fi dall'elenco prima di connetterti")
+            if hidden:
+                msg = "Inserisci il nome (SSID) della rete Wi-Fi nascosta prima di connetterti" if self.state.get("lang", "it") == "it" else "Please enter the hidden Wi-Fi network name (SSID) before connecting"
+            else:
+                msg = "Seleziona una rete Wi-Fi dall'elenco prima di connetterti" if self.state.get("lang", "it") == "it" else "Select a Wi-Fi network from the list before connecting"
+            self._update_wifi_banner(err_msg=msg)
             return
         if getattr(self, "wifi_worker", None) and self.wifi_worker.isRunning():
             return
 
+        if pw and len(pw) < 8:
+            self._update_wifi_banner(err_msg="La password Wi-Fi deve contenere almeno 8 caratteri" if self.state.get("lang", "it") == "it" else "Wi-Fi password must be at least 8 characters")
+            return
+
+        sec = getattr(self, "wifi_security", {}).get(ssid, "")
+        if sec and sec.upper() not in ("OPEN", "NONE", "--") and not hidden and not pw:
+            self._update_wifi_banner(err_msg="Questa rete Wi-Fi è protetta: inserisci la password prima di connetterti" if self.state.get("lang", "it") == "it" else "This Wi-Fi network is password-protected. Please enter password.")
+            return
+
         self.touch_kbd.hide()
-        self.lbl_wifi_status.setText(f"⏳ Connessione a '{ssid}' in corso...")
+        status_txt = f"⏳ Connessione a '{ssid}' in corso..." if self.state.get("lang", "it") == "it" else f"⏳ Connecting to '{ssid}'..."
+        self.lbl_wifi_status.setText(status_txt)
         self.lbl_wifi_status.setStyleSheet("color: #58a6ff; font-size: 17px; font-weight: bold; padding: 10px; background: #161b22; border-radius: 8px;")
         self.btn_connect_wifi.setEnabled(False)
+        self.btn_next.setEnabled(False)
 
         if self.args.dry_run:
             # Instant in simulation: keep it synchronous (used by --test-screenshots)
@@ -1744,15 +1787,52 @@ class N8000SetupWizard(QMainWindow):
         err_detail = None
 
         if not self.args.dry_run:
+            if not ssid:
+                msg = "SSID non specificato" if self.state.get("lang", "it") == "it" else "SSID is required"
+                return False, msg, False, msg
+
+            if pw and len(pw) < 8:
+                msg = "Password Wi-Fi troppo corta (minimo 8 caratteri)" if self.state.get("lang", "it") == "it" else "Wi-Fi password must be at least 8 characters"
+                return False, msg, False, msg
+
             # Unlock European Wi-Fi channels (1-13)
             subprocess.run(["iw", "reg", "set", "IT"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-            # Remove prior profiles with the same SSID to avoid conflicts or secret-agent errors
-            subprocess.run(["nmcli", "connection", "delete", "id", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            subprocess.run(["nmcli", "connection", "delete", ssid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            # Ensure /etc/NetworkManager/system-connections exists and has 0700 permissions (0600 for keyfiles)
+            try:
+                nm_conn_dir = "/etc/NetworkManager/system-connections"
+                os.makedirs(nm_conn_dir, mode=0o700, exist_ok=True)
+                os.chmod(nm_conn_dir, 0o700)
+                for f in os.listdir(nm_conn_dir):
+                    fp = os.path.join(nm_conn_dir, f)
+                    if os.path.isfile(fp):
+                        os.chmod(fp, 0o600)
+            except Exception as e:
+                self._wifi_log(f"Keyfile permissions fix notice: {e}")
 
-            # Stage 1: Create persistent connection profile with PMF disabled (wifi-sec.pmf 1)
+            # Remove prior profiles with the same SSID by UUID to avoid conflicts, duplicate profiles, or secret-agent errors
+            try:
+                cp = subprocess.run(
+                    ["nmcli", "-t", "-f", "UUID,TYPE,NAME", "connection", "show"],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=5
+                )
+                for line in cp.stdout.splitlines():
+                    parts = line.strip().split(":", 2)
+                    if len(parts) >= 3:
+                        u, ctype, name = parts[0].strip(), parts[1].strip(), parts[2].replace(r"\:", ":").strip()
+                        if ctype in ("802-11-wireless", "wifi") and name == ssid:
+                            subprocess.run(["nmcli", "connection", "delete", "uuid", u],
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+            except Exception as e:
+                self._wifi_log(f"Cleanup query exception: {e}")
+
+            # Fallback direct delete by name
+            subprocess.run(["nmcli", "connection", "delete", ssid],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+            # Stage 1: Create persistent connection profile with PMF disabled (wifi-sec.pmf 1) and psk-flags 0
             # This prevents status_code=16 rejection from Broadcom BCM4334 chip on modern routers
+            # wifi-sec.psk-flags 0 ensures the secret is stored in system keyfile and not agent-owned
             add_cmd = [
                 "nmcli", "connection", "add", "type", "wifi",
                 "con-name", ssid, "ssid", ssid,
@@ -1767,6 +1847,7 @@ class N8000SetupWizard(QMainWindow):
                 add_cmd += [
                     "wifi-sec.key-mgmt", "wpa-psk",
                     "wifi-sec.psk", pw,
+                    "wifi-sec.psk-flags", "0",
                     "wifi-sec.pmf", "1",  # 1 = disabled
                 ]
             if hidden:
@@ -1774,34 +1855,106 @@ class N8000SetupWizard(QMainWindow):
 
             add_res = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if add_res.returncode == 0:
+                # Extract UUID if returned by nmcli connection add
+                m = re.search(r"\(([0-9a-fA-F-]{36})\)", add_res.stdout)
+                con_uuid = m.group(1) if m else None
+
+                # Enforce 0600 on created keyfile
+                try:
+                    nm_conn_dir = "/etc/NetworkManager/system-connections"
+                    if os.path.isdir(nm_conn_dir):
+                        for f in os.listdir(nm_conn_dir):
+                            fp = os.path.join(nm_conn_dir, f)
+                            if os.path.isfile(fp):
+                                os.chmod(fp, 0o600)
+                except Exception as e:
+                    self._wifi_log(f"Post-add keyfile permissions notice: {e}")
+
                 ensure_dns_servers()
                 subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                up_res = subprocess.run(["nmcli", "--wait", "35", "connection", "up", ssid],
-                                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                if up_res.returncode == 0:
-                    subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                else:
-                    err_detail = up_res.stderr.strip() or up_res.stdout.strip()
-                    self._wifi_log(f"up failed (stage 1): {err_detail}")
-                    # Stage 2: Fallback attempt with refreshed DNS and power save disabled
-                    if pw:
-                        ensure_dns_servers()
+
+                # For hidden networks, actively trigger a rescan/probe for this SSID
+                if hidden:
+                    subprocess.run(["nmcli", "device", "wifi", "rescan", "ifname", "wlan0", "ssid", ssid],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+
+                # Create temporary password file for connection up.
+                # This guarantees that nmcli will never throw:
+                # "802-11-wireless-security.psk not given in 'password-file' and nmcli cannot ask without '--ask' option"
+                pw_file_path = None
+                if pw:
+                    try:
+                        clean_pw = pw.replace("\r", "").replace("\n", "").replace("\0", "")
+                        with tempfile.NamedTemporaryFile(mode="w", prefix="nmcli_pw_", delete=False) as tf:
+                            tf.write(f"802-11-wireless-security.psk:{clean_pw}\n")
+                            tf.write(f"wifi-sec.psk:{clean_pw}\n")
+                            pw_file_path = tf.name
+                        os.chmod(pw_file_path, 0o600)
+                    except Exception as e:
+                        self._wifi_log(f"Failed to create passwd-file: {e}")
+                        pw_file_path = None
+
+                try:
+                    up_cmd = ["nmcli", "--wait", "35", "connection", "up"]
+                    if con_uuid:
+                        up_cmd += ["uuid", con_uuid]
+                    else:
+                        up_cmd += [ssid]
+                    if pw_file_path:
+                        up_cmd += ["passwd-file", pw_file_path]
+
+                    up_res = subprocess.run(up_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    if up_res.returncode == 0:
                         subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        up_res2 = subprocess.run(["nmcli", "--wait", "35", "connection", "up", ssid],
-                                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                        if up_res2.returncode == 0:
-                            err_detail = None
+                    else:
+                        raw_err = up_res.stderr.strip() or up_res.stdout.strip()
+                        self._wifi_log(f"up failed (stage 1): {raw_err}")
+
+                        # Check if error is authentication-specific (wrong password, secrets rejected)
+                        lower_err = raw_err.lower()
+                        is_auth_error = ("not given" in lower_err and ("passwd-file" in lower_err or "password-file" in lower_err or "psk" in lower_err)) or \
+                                        any(k in lower_err for k in (
+                                            "secrets were required", "4-way handshake", "psk not given",
+                                            "pre-shared key may be incorrect", "auth failed", "unauthorized",
+                                            "wrong-password", "bad password", "no-secrets", "invalid key"
+                                        ))
+
+                        # Stage 2: Fallback attempt for transient RF / power-save drops (skip retry on bad password)
+                        if not is_auth_error:
+                            ensure_dns_servers()
                             subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
                                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        else:
-                            err_detail = up_res2.stderr.strip() or err_detail
-                            self._wifi_log(f"up failed (stage 2): {err_detail}")
+                            if hidden:
+                                subprocess.run(["nmcli", "device", "wifi", "rescan", "ifname", "wlan0", "ssid", ssid],
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+                            time.sleep(1)
+                            up_res2 = subprocess.run(up_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                            if up_res2.returncode == 0:
+                                raw_err = None
+                                subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            else:
+                                raw_err = up_res2.stderr.strip() or raw_err
+                                self._wifi_log(f"up failed (stage 2): {raw_err}")
+
+                        if raw_err:
+                            err_detail = self._format_wifi_error(raw_err, ssid)
+                finally:
+                    if pw_file_path and os.path.exists(pw_file_path):
+                        try:
+                            os.unlink(pw_file_path)
+                        except Exception:
+                            pass
             else:
-                err_detail = add_res.stderr.strip() or "Failed to create connection profile"
-                self._wifi_log(f"add failed: {err_detail}")
+                raw_add_err = add_res.stderr.strip() or "Failed to create connection profile"
+                err_detail = self._format_wifi_error(raw_add_err, ssid)
+                self._wifi_log(f"add failed: {raw_add_err}")
+
+            if err_detail:
+                # Activation failed: do not wait for DHCP or attempt internet checks on an inactive interface
+                return False, err_detail, False, err_detail
 
         ok, info, is_local_only = self._check_internet(wait_dhcp=True)
         return ok, info, is_local_only, err_detail

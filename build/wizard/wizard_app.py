@@ -26,6 +26,8 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 
 def _global_exception_handler(exctype, value, tb):
     err_str = "".join(traceback.format_exception(exctype, value, tb))
@@ -40,7 +42,7 @@ def _global_exception_handler(exctype, value, tb):
 sys.excepthook = _global_exception_handler
 
 from PyQt5.QtCore import Qt, QThread, QTimer, pyqtSignal, QObject, QEvent, QPointF
-from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QPalette
 from PyQt5.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -181,6 +183,31 @@ TR = {
         "s8_start_btn": "🚀  Avvia Installazione Completa",
         "s8_retry_btn": "🔁  Riprova Installazione (riprende dal punto interrotto)",
         "s8_reboot_btn": "✅  Installazione Completata — Riavvia in NoteOS",
+        "s8_sum_lang": "• Lingua / Tastiera : {lang} / layout '{kb}' (Tastiera Touch: {vkbd})",
+        "s8_sum_wifi": "• Rete Wi-Fi / Fuso : {net}   |   Fuso: {tz} (NTP: {ntp})",
+        "s8_sum_desk": "• Ambiente Desktop  : {desk} + {base} ({mb:.1f} MiB)",
+        "s8_sum_apps": "• Programmi ({cnt:02d}/20) : {apps}",
+        "s8_sum_user": "• Utente / Hostname : {user} ({name}) @ {host}   |   Autologin: {auto}",
+        "s8_yes": "Sì",
+        "s8_no": "No",
+        "s8_none": "Nessuno",
+        "s8_base_inc": "Base completa di serie",
+        "s8_active": "Attiva",
+        "inst_step_init": "Configurazione lingua, tastiera, fuso orario e hostname...",
+        "inst_log_init": "Impostazione locale={locale}, tastiera={kb}, fuso={tz}, hostname={host}",
+        "inst_step_apt": "Aggiornamento indici dei pacchetti Debian (apt-get update)...",
+        "inst_log_vscode": "Configurazione repository ufficiale Microsoft VS Code (armhf, signed-by)...",
+        "inst_log_vscode_err": "Avviso: Impossibile scaricare la chiave Microsoft ({err}); VS Code verrà saltato",
+        "inst_step_desk": "Installazione base desktop ({desk}: {cnt} pacchetti)...",
+        "inst_step_apps": "Installazione programmi selezionati ({cnt} pacchetti)...",
+        "inst_step_user": "Creazione utente, configurazione sudo, Baloo e SDDM...",
+        "inst_log_user": "Creazione/aggiornamento utente '{user}' ({name})...",
+        "inst_step_clean": "Pulizia cache apt e scrittura setup.done...",
+        "inst_step_done": "Installazione completata con successo!",
+        "inst_log_done": "Setup di NoteOS completato con successo. Pronto per il riavvio.",
+        "inst_err_prefix": "Errore installazione",
+        "inst_sim_err": "ERRORE SIMULATO: Connessione interrotta durante apt-get update!",
+        "inst_cmd_fail": "Comando fallito (exit {rc}): {cmd}",
     },
     "en": {
         "app_title": "NoteOS — First-Boot Setup Wizard (GT-N8000)",
@@ -246,6 +273,31 @@ TR = {
         "s8_start_btn": "🚀  Start Full Installation",
         "s8_retry_btn": "🔁  Retry Installation (resumes from interrupted step)",
         "s8_reboot_btn": "✅  Installation Complete — Reboot into Desktop",
+        "s8_sum_lang": "• Language / Keyboard : {lang} / layout '{kb}' (Touch Keyboard: {vkbd})",
+        "s8_sum_wifi": "• Wi-Fi Network / Timezone : {net}   |   Timezone: {tz} (NTP: {ntp})",
+        "s8_sum_desk": "• Desktop Environment : {desk} + {base} ({mb:.1f} MiB)",
+        "s8_sum_apps": "• Applications ({cnt:02d}/20) : {apps}",
+        "s8_sum_user": "• User / Hostname : {user} ({name}) @ {host}   |   Autologin: {auto}",
+        "s8_yes": "Yes",
+        "s8_no": "No",
+        "s8_none": "None",
+        "s8_base_inc": "Full base included",
+        "s8_active": "Active",
+        "inst_step_init": "Configuring language, keyboard, timezone and hostname...",
+        "inst_log_init": "Setting locale={locale}, keyboard={kb}, timezone={tz}, hostname={host}",
+        "inst_step_apt": "Updating Debian package lists (apt-get update)...",
+        "inst_log_vscode": "Configuring official Microsoft VS Code repository (armhf, signed-by)...",
+        "inst_log_vscode_err": "Warning: Could not fetch Microsoft key ({err}); skipping VS Code repo",
+        "inst_step_desk": "Installing desktop base ({desk}: {cnt} packages)...",
+        "inst_step_apps": "Installing selected applications ({cnt} packages)...",
+        "inst_step_user": "Creating user account, configuring sudo, Baloo and SDDM...",
+        "inst_log_user": "Creating/updating user '{user}' ({name})...",
+        "inst_step_clean": "Cleaning apt cache and writing setup.done...",
+        "inst_step_done": "Installation completed successfully!",
+        "inst_log_done": "NoteOS setup completed successfully. Ready to reboot.",
+        "inst_err_prefix": "Installation error",
+        "inst_sim_err": "SIMULATED ERROR: Connection lost during apt-get update!",
+        "inst_cmd_fail": "Command failed (exit {rc}): {cmd}",
     },
 }
 
@@ -478,6 +530,16 @@ class InstallWorker(QThread):
         self.simulate_apt_fail = simulate_apt_fail
         self.log_path = log_path
 
+    def _tr(self, key, **kwargs):
+        lang = self.state.get("lang", "en")
+        txt = TR.get(lang, TR["en"]).get(key, TR["en"].get(key, key))
+        if kwargs:
+            try:
+                return txt.format(**kwargs)
+            except Exception:
+                return txt
+        return txt
+
     def _log(self, msg):
         # Sicurezza: mai scrivere la password nei log
         if self.user_password and len(self.user_password) >= 2:
@@ -508,19 +570,19 @@ class InstallWorker(QThread):
             self._log("  " + line.rstrip("\n"))
         rc = proc.wait()
         if check and rc != 0:
-            raise RuntimeError(f"Comando fallito (exit {rc}): {' '.join(cmd)}")
+            raise RuntimeError(self._tr("inst_cmd_fail", rc=rc, cmd=' '.join(cmd)))
         return rc
 
     def run(self):
         try:
-            self.progress_sig.emit(5, "Configurazione lingua, tastiera, fuso orario e hostname...")
+            self.progress_sig.emit(5, self._tr("inst_step_init"))
             lang = self.state.get("lang", "it")
             locale_str = "it_IT.UTF-8" if lang == "it" else "en_US.UTF-8"
             kb_layout = self.state.get("kb_layout", "it")
             tz = self.state.get("timezone", "Europe/Rome")
             hostname = self.state.get("hostname", "noteos").strip() or "noteos"
 
-            self._log(f"Impostazione locale={locale_str}, tastiera={kb_layout}, fuso={tz}, hostname={hostname}")
+            self._log(self._tr("inst_log_init", locale=locale_str, kb=kb_layout, tz=tz, host=hostname))
             if not self.dry_run:
                 with open("/etc/default/locale", "w") as f:
                     f.write(f"LANG={locale_str}\n")
@@ -537,25 +599,33 @@ class InstallWorker(QThread):
                 with open("/etc/hosts", "w") as f:
                     f.write(f"127.0.0.1\tlocalhost\n127.0.1.1\t{hostname}\n::1\t\tlocalhost ip6-localhost ip6-loopback\n")
 
-            self.progress_sig.emit(15, "Aggiornamento indici dei pacchetti Debian (apt-get update)...")
+            self.progress_sig.emit(15, self._tr("inst_step_apt"))
             if self.simulate_apt_fail:
-                self._log("ERRORE SIMULATO: Connessione interrotta durante apt-get update!")
-                raise RuntimeError("Impossibile scaricare gli indici apt (errore di rete simulato).")
+                self._log(self._tr("inst_sim_err"))
+                raise RuntimeError("apt update simulated failure")
 
             # Se è stato selezionato VS Code, configura il repository ufficiale Microsoft armhf con signed-by
             selected_ids = set(self.state.get("selected_apps", []))
             if "code" in selected_ids:
-                self._log("Configurazione repository ufficiale Microsoft VS Code (armhf, signed-by)...")
+                self._log(self._tr("inst_log_vscode"))
                 if not self.dry_run:
-                    import base64
-                    os.makedirs("/etc/apt/keyrings", exist_ok=True)
-                    asc = urllib.request.urlopen("https://packages.microsoft.com/keys/microsoft.asc", timeout=15).read().decode("ascii", errors="ignore")
-                    b64_lines = [l.strip() for l in asc.splitlines() if l.strip() and not l.startswith("-----") and not l.startswith("=") and ":" not in l]
-                    with open("/etc/apt/keyrings/microsoft-archive-keyring.gpg", "wb") as kf:
-                        kf.write(base64.b64decode("".join(b64_lines)))
-                    os.chmod("/etc/apt/keyrings/microsoft-archive-keyring.gpg", 0o644)
-                    with open("/etc/apt/sources.list.d/vscode.list", "w") as f:
-                        f.write("deb [arch=armhf signed-by=/etc/apt/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main\n")
+                    try:
+                        import base64
+                        os.makedirs("/etc/apt/keyrings", exist_ok=True)
+                        req = urllib.request.Request(
+                            "https://packages.microsoft.com/keys/microsoft.asc",
+                            headers={"User-Agent": "NoteOS-Setup/1.0 (GT-N8000)"}
+                        )
+                        with urllib.request.urlopen(req, timeout=15) as resp:
+                            asc = resp.read().decode("ascii", errors="ignore")
+                        b64_lines = [l.strip() for l in asc.splitlines() if l.strip() and not l.startswith("-----") and not l.startswith("=") and ":" not in l]
+                        with open("/etc/apt/keyrings/microsoft-archive-keyring.gpg", "wb") as kf:
+                            kf.write(base64.b64decode("".join(b64_lines)))
+                        os.chmod("/etc/apt/keyrings/microsoft-archive-keyring.gpg", 0o644)
+                        with open("/etc/apt/sources.list.d/vscode.list", "w") as f:
+                            f.write("deb [arch=armhf signed-by=/etc/apt/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main\n")
+                    except Exception as key_err:
+                        self._log(self._tr("inst_log_vscode_err", err=str(key_err)))
 
             self._run_cmd(["apt-get", "update"])
 
@@ -573,20 +643,20 @@ class InstallWorker(QThread):
                 if app["id"] in selected_ids:
                     app_pkgs.extend(app["pkgs"])
 
-            self.progress_sig.emit(35, f"Installazione base desktop ({desk_id.upper()}: {len(desk_pkgs)} pacchetti)...")
+            self.progress_sig.emit(35, self._tr("inst_step_desk", desk=desk_id.upper(), cnt=len(desk_pkgs)))
             if desk_pkgs:
                 self._run_cmd(["apt-get", "install", "-y", "--no-install-recommends"] + desk_pkgs)
 
-            self.progress_sig.emit(65, f"Installazione programmi selezionati ({len(app_pkgs)} pacchetti)...")
+            self.progress_sig.emit(65, self._tr("inst_step_apps", cnt=len(app_pkgs)))
             if app_pkgs:
                 self._run_cmd(["apt-get", "install", "-y", "--no-install-recommends"] + app_pkgs)
 
-            self.progress_sig.emit(80, "Creazione utente, configurazione sudo, Baloo e SDDM...")
+            self.progress_sig.emit(80, self._tr("inst_step_user"))
             username = self.state.get("username", "utente").strip()
             fullname = self.state.get("fullname", username).strip() or username
             autologin = bool(self.state.get("autologin", True))
 
-            self._log(f"Creazione/aggiornamento utente '{username}' ({fullname})...")
+            self._log(self._tr("inst_log_user", user=username, name=fullname))
             if not self.dry_run:
                 rc = subprocess.run(["id", "-u", username], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
                 if rc != 0:
@@ -643,7 +713,7 @@ class InstallWorker(QThread):
                 self._run_cmd(["systemctl", "enable", "sddm.service"], check=False)
                 self._run_cmd(["systemctl", "set-default", "graphical.target"], check=False)
 
-            self.progress_sig.emit(95, "Pulizia cache apt e scrittura setup.done...")
+            self.progress_sig.emit(95, self._tr("inst_step_clean"))
             self._run_cmd(["apt-get", "clean"], check=False)
             done_file = os.path.join(os.path.dirname(self.log_path), "setup.done")
             os.makedirs(os.path.dirname(done_file), exist_ok=True)
@@ -657,10 +727,11 @@ class InstallWorker(QThread):
                     "selected_apps": list(selected_ids),
                 }, indent=2) + "\n")
 
-            self.progress_sig.emit(100, "Installazione completata con successo!")
-            self.finished_sig.emit(True, "Installazione completata.")
+            self.progress_sig.emit(100, self._tr("inst_step_done"))
+            self._log(self._tr("inst_log_done"))
+            self.finished_sig.emit(True, self._tr("inst_step_done"))
         except Exception as e:
-            self._log(f"ERRORE INSTALLAZIONE: {e}")
+            self._log(f"{self._tr('inst_err_prefix')}: {e}")
             self.finished_sig.emit(False, str(e))
 
 
@@ -794,6 +865,20 @@ class N8000SetupWizard(QMainWindow):
                 color: #eff0f1;
                 font-family: "DejaVu Sans", "Noto Sans", sans-serif;
                 font-size: 15px;
+            }}
+            QWidget {{
+                color: #eff0f1;
+            }}
+            QLabel {{
+                color: #eff0f1;
+            }}
+            QScrollArea {{
+                background: transparent;
+                border: none;
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background: transparent;
+                color: #eff0f1;
             }}
             QFrame#HeaderBar {{
                 background-color: #161c21;
@@ -1329,7 +1414,7 @@ class N8000SetupWizard(QMainWindow):
 
         self.lbl_wifi_status = QLabel()
         self.lbl_wifi_status.setWordWrap(True)
-        self.lbl_wifi_status.setStyleSheet("font-size: 17px; font-weight: bold; padding: 8px; background: #161b22; border-radius: 8px;")
+        self.lbl_wifi_status.setStyleSheet("font-size: 17px; font-weight: bold; padding: 8px; background: #161b22; color: #eff0f1; border-radius: 8px;")
         v.addWidget(self.lbl_wifi_status)
         v.addStretch(1)
         return w
@@ -2043,7 +2128,7 @@ class N8000SetupWizard(QMainWindow):
 
         self.lbl_summary_box = QLabel()
         self.lbl_summary_box.setWordWrap(True)
-        self.lbl_summary_box.setStyleSheet("background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-size: 16px;")
+        self.lbl_summary_box.setStyleSheet("background: #161b22; color: #eff0f1; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-size: 16px;")
         v.addWidget(self.lbl_summary_box)
 
         self.progress_bar = QProgressBar()
@@ -2099,12 +2184,25 @@ class N8000SetupWizard(QMainWindow):
 
         desk = DESKTOPS[self.state.get("desktop", "lxqt")]
         apps = self.state.get("selected_apps", [])
+        lang = self.state.get("lang", "en")
+        desk_name = desk.get(f"name_{lang}", desk.get("name_en", desk.get("name_it")))
+        yes_str = self.t("s8_yes")
+        no_str = self.t("s8_no")
+        none_str = self.t("s8_none")
+        base_str = self.t("s8_base_inc")
+        act_str = self.t("s8_active")
+        vkbd_str = yes_str if self.state.get("vkbd_enabled", True) else no_str
+        ntp_str = yes_str if self.state.get("ntp_enabled", True) else no_str
+        auto_str = yes_str if self.state.get("autologin", True) else no_str
+        net_str = self.state.get("net_name") or self.state.get("wifi_ssid") or act_str
+        apps_str = ", ".join(apps) if apps else none_str
+
         summary_lines = [
-            f"• Lingua / Tastiera : {self.state['lang'].upper()} / layout '{self.state['kb_layout']}' (Tastiera Touch: {'Sì' if self.state.get('vkbd_enabled', True) else 'No'})",
-            f"• Rete Wi-Fi / Fuso : {self.state.get('net_name') or self.state.get('wifi_ssid') or 'Attiva'}   |   Fuso: {self.state['timezone']} (NTP: {'Sì' if self.state.get('ntp_enabled', True) else 'No'})",
-            f"• Ambiente Desktop  : {desk['name_it']} + Base completa di serie ({desk['installed_mb']:.1f} MiB)",
-            f"• Programmi ({len(apps):02d}/20) : {', '.join(apps) if apps else 'Nessuno'}",
-            f"• Utente / Hostname : {self.state.get('username')} ({self.state.get('fullname')}) @ {self.state.get('hostname')}   |   Autologin: {'Sì' if self.state.get('autologin', True) else 'No'}",
+            self.t("s8_sum_lang", lang=lang.upper(), kb=self.state["kb_layout"], vkbd=vkbd_str),
+            self.t("s8_sum_wifi", net=net_str, tz=self.state["timezone"], ntp=ntp_str),
+            self.t("s8_sum_desk", desk=desk_name, base=base_str, mb=desk["installed_mb"]),
+            self.t("s8_sum_apps", cnt=len(apps), apps=apps_str),
+            self.t("s8_sum_user", user=self.state.get("username"), name=self.state.get("fullname"), host=self.state.get("hostname"), auto=auto_str),
         ]
         self.lbl_summary_box.setText("\n".join(summary_lines))
 
@@ -2138,7 +2236,8 @@ class N8000SetupWizard(QMainWindow):
             self.btn_reboot_now.show()
         else:
             self.lbl_nav_error.setStyleSheet("color: #ff7b72; font-weight: bold;")
-            self.lbl_nav_error.setText(f"❌ Errore: {msg}")
+            err_prefix = self.t("inst_err_prefix")
+            self.lbl_nav_error.setText(f"❌ {err_prefix}: {msg}")
             self.btn_retry_install.show()
             self.btn_back.setEnabled(True)
 
@@ -2355,6 +2454,22 @@ def main():
             pass
 
     app = QApplication(sys.argv)
+    dark_pal = QPalette()
+    dark_pal.setColor(QPalette.Window, QColor("#1b2228"))
+    dark_pal.setColor(QPalette.WindowText, QColor("#eff0f1"))
+    dark_pal.setColor(QPalette.Base, QColor("#20272d"))
+    dark_pal.setColor(QPalette.AlternateBase, QColor("#1b2228"))
+    dark_pal.setColor(QPalette.ToolTipBase, QColor("#eff0f1"))
+    dark_pal.setColor(QPalette.ToolTipText, QColor("#eff0f1"))
+    dark_pal.setColor(QPalette.Text, QColor("#eff0f1"))
+    dark_pal.setColor(QPalette.Button, QColor("#20272d"))
+    dark_pal.setColor(QPalette.ButtonText, QColor("#eff0f1"))
+    dark_pal.setColor(QPalette.BrightText, Qt.red)
+    dark_pal.setColor(QPalette.Link, QColor("#3daee9"))
+    dark_pal.setColor(QPalette.Highlight, QColor("#1d99f3"))
+    dark_pal.setColor(QPalette.HighlightedText, QColor("#ffffff"))
+    app.setPalette(dark_pal)
+
     win = N8000SetupWizard(args)
     if not args.test_screenshots:
         win.showFullScreen()

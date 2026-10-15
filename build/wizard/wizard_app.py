@@ -738,10 +738,11 @@ class N8000SetupWizard(QMainWindow):
                 for b in glob.glob("/sys/class/backlight/*/max_brightness"):
                     try:
                         with open(b) as f_max:
-                            max_b = f_max.read().strip()
+                            max_b = int(f_max.read().strip())
                         b_dir = os.path.dirname(b)
+                        # NOTE: max level = 100% PWM duty, which blacks out the N8000 panel
                         with open(os.path.join(b_dir, "brightness"), "w") as f_br:
-                            f_br.write(max_b + "\n")
+                            f_br.write(str(max(1, max_b // 2)) + "\n")
                     except Exception:
                         pass
                 subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -2377,10 +2378,11 @@ def main():
         for b in glob.glob("/sys/class/backlight/*/max_brightness"):
             try:
                 with open(b) as f_max:
-                    max_b = f_max.read().strip()
+                    max_b = int(f_max.read().strip())
                 b_dir = os.path.dirname(b)
+                # NOTE: max level = 100% PWM duty, which blacks out the N8000 panel
                 with open(os.path.join(b_dir, "brightness"), "w") as f_br:
-                    f_br.write(max_b + "\n")
+                    f_br.write(str(max(1, max_b // 2)) + "\n")
             except Exception:
                 pass
         subprocess.run(["xset", "dpms", "force", "on"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)

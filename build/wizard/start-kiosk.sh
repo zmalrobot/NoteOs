@@ -25,7 +25,8 @@ for fb in /sys/class/graphics/fb*; do
 done
 for b in /sys/class/backlight/*; do
     if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
-        cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
+        # max level = 100% PWM duty blacks out the N8000 panel: use half (DT default)
+        echo $(( $(cat "$b/max_brightness") / 2 )) > "$b/brightness" 2>/dev/null || true
     fi
 done
 
@@ -48,7 +49,8 @@ for fb in /sys/class/graphics/fb*; do
 done
 for b in /sys/class/backlight/*; do
     if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
-        cat "$b/max_brightness" > "$b/brightness" 2>/dev/null || true
+        # max level = 100% PWM duty blacks out the N8000 panel: use half (DT default)
+        echo $(( $(cat "$b/max_brightness") / 2 )) > "$b/brightness" 2>/dev/null || true
     fi
 done
 

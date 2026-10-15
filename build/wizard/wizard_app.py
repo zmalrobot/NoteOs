@@ -662,8 +662,6 @@ class InstallWorker(QThread):
                     with open("/etc/apt/sources.list.d/vscode.list", "w") as f:
                         f.write(f"deb [arch=armhf signed-by={key_file}] https://packages.microsoft.com/repos/code stable main\n")
 
-            self._run_cmd(["apt-get", "update"])
-
             desk_id = self.state.get("desktop", "lxqt")
             desk = DESKTOPS.get(desk_id, DESKTOPS["lxqt"])
             list_path = desk["list_file"] if os.path.exists(desk["list_file"]) else desk["fallback_list_file"]
@@ -671,6 +669,58 @@ class InstallWorker(QThread):
             if os.path.exists(list_path):
                 with open(list_path) as f:
                     desk_pkgs = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
+
+            # Opzioni di rete resilienti per APT (IPv4 forzato, 5 tentativi, no pipelining su CDN, timeout 30s)
+            apt_net_opts = [
+                "-o", "Acquire::ForceIPv4=true",
+                "-o", "Acquire::Retries=5",
+                "-o", "Acquire::http::Timeout=30",
+                "-o", "Acquire::https::Timeout=30",
+                "-o", "Acquire::http::Pipeline-Depth=0",
+                "-o", "Acquire::https::Pipeline-Depth=0",
+            ]
+
+            update_ok = False
+            for attempt in range(1, 4):
+                if not self.dry_run:
+                    ensure_dns_servers()
+                    subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                rc = self._run_cmd(["apt-get", "update"] + apt_net_opts, check=False)
+                if rc == 0:
+                    update_ok = True
+                    break
+                self._log(f"apt-get update: tentativo {attempt}/3 terminato con codice {rc}")
+                if attempt < 3:
+                    time.sleep(3)
+
+            # Se apt-get update fallisce a causa di VS Code (server Microsoft irraggiungibile),
+            # isola il repository esterno per consentire l'installazione del Desktop e delle app Debian
+            vscode_list = "/etc/apt/sources.list.d/vscode.list"
+            if not update_ok and "code" in selected_ids and os.path.exists(vscode_list):
+                self._log("Isolamento repository Microsoft VS Code e nuovo tentativo apt-get update...")
+                try:
+                    os.rename(vscode_list, vscode_list + ".disabled")
+                except Exception:
+                    pass
+                rc = self._run_cmd(["apt-get", "update"] + apt_net_opts, check=False)
+                if rc == 0:
+                    update_ok = True
+
+            if not update_ok:
+                # Se abbiamo già i cataloghi Debian preinstallati, controlla se possiamo procedere
+                can_proceed = False
+                if not self.dry_run and desk_pkgs:
+                    chk_pkg = desk_pkgs[0]
+                    chk_proc = subprocess.run(
+                        ["apt-cache", "policy", chk_pkg],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                    )
+                    if "Candidate:" in chk_proc.stdout and "(none)" not in chk_proc.stdout:
+                        self._log(f"Cataloghi pacchetti pre-esistenti validi per '{chk_pkg}'. Si procede all'installazione offline/fallback.")
+                        can_proceed = True
+                if not can_proceed:
+                    raise RuntimeError(self._tr("inst_cmd_fail", rc=100, cmd="apt-get update"))
 
             # Verifica che il catalogo pacchetti sia disponibile e interrogabile
             if not self.dry_run and desk_pkgs:
@@ -692,7 +742,8 @@ class InstallWorker(QThread):
                 "apt-get", "install", "-y", "--no-install-recommends",
                 "-o", "Dpkg::Options::=--force-confdef",
                 "-o", "Dpkg::Options::=--force-confold",
-            ]
+                "--fix-missing",
+            ] + apt_net_opts
 
             self.progress_sig.emit(35, self._tr("inst_step_desk", desk=desk_id.upper(), cnt=len(desk_pkgs)))
             if desk_pkgs:
@@ -700,7 +751,11 @@ class InstallWorker(QThread):
 
             self.progress_sig.emit(65, self._tr("inst_step_apps", cnt=len(app_pkgs)))
             if app_pkgs:
-                self._run_cmd(apt_install_cmd + app_pkgs)
+                if os.path.exists("/etc/apt/sources.list.d/vscode.list.disabled") and "code" in app_pkgs:
+                    app_pkgs = [p for p in app_pkgs if p != "code"]
+                    self._log("VS Code non installabile (server Microsoft non raggiungibile): verrà saltato.")
+                if app_pkgs:
+                    self._run_cmd(apt_install_cmd + app_pkgs)
 
             self.progress_sig.emit(80, self._tr("inst_step_user"))
             username = self.state.get("username", "utente").strip()
@@ -1703,8 +1758,10 @@ class N8000SetupWizard(QMainWindow):
                 "con-name", ssid, "ssid", ssid,
                 "ifname", "wlan0",
                 "connection.autoconnect", "yes",
+                "802-11-wireless.powersave", "2",
                 "ipv4.dns", "1.1.1.1 8.8.8.8",
                 "ipv4.ignore-auto-dns", "no",
+                "ipv6.method", "disabled",
             ]
             if pw:
                 add_cmd += [
@@ -1718,22 +1775,30 @@ class N8000SetupWizard(QMainWindow):
             add_res = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if add_res.returncode == 0:
                 ensure_dns_servers()
-                up_res = subprocess.run(["nmcli", "--wait", "20", "connection", "up", ssid],
+                subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                up_res = subprocess.run(["nmcli", "--wait", "35", "connection", "up", ssid],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                if up_res.returncode != 0:
+                if up_res.returncode == 0:
+                    subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
                     err_detail = up_res.stderr.strip() or up_res.stdout.strip()
                     self._wifi_log(f"up failed (stage 1): {err_detail}")
-                    # Stage 2: Fallback to pure 2.4 GHz band (bg) for routers with dual-band steering issues
+                    # Stage 2: Fallback attempt with refreshed DNS and power save disabled
                     if pw:
-                        subprocess.run(["nmcli", "connection", "modify", ssid, "802-11-wireless.band", "bg"],
+                        ensure_dns_servers()
+                        subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                        up_res2 = subprocess.run(["nmcli", "--wait", "20", "connection", "up", ssid],
+                        up_res2 = subprocess.run(["nmcli", "--wait", "35", "connection", "up", ssid],
                                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                         if up_res2.returncode == 0:
                             err_detail = None
+                            subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         else:
                             err_detail = up_res2.stderr.strip() or err_detail
-                            self._wifi_log(f"up failed (stage 2, 2.4 GHz): {err_detail}")
+                            self._wifi_log(f"up failed (stage 2): {err_detail}")
             else:
                 err_detail = add_res.stderr.strip() or "Failed to create connection profile"
                 self._wifi_log(f"add failed: {err_detail}")

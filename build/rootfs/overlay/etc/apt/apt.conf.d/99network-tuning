@@ -1,0 +1,7 @@
+// NoteOS — Network resilience for APT package manager
+Acquire::ForceIPv4 "true";
+Acquire::Retries "5";
+Acquire::http::Timeout "30";
+Acquire::https::Timeout "30";
+Acquire::http::Pipeline-Depth "0";
+Acquire::https::Pipeline-Depth "0";

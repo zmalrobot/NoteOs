@@ -22,6 +22,7 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -208,6 +209,8 @@ TR = {
         "inst_err_prefix": "Errore installazione",
         "inst_sim_err": "ERRORE SIMULATO: Connessione interrotta durante apt-get update!",
         "inst_cmd_fail": "Comando fallito (exit {rc}): {cmd}",
+        "inst_repo_unavail": "Repository non raggiungibili o indice pacchetti non disponibile. Verifica la connessione Internet e riprova.",
+        "inst_dns_unavail": "Risoluzione DNS fallita per deb.debian.org. Verifica che la rete Wi-Fi abbia accesso a Internet.",
     },
     "en": {
         "app_title": "NoteOS — First-Boot Setup Wizard (GT-N8000)",
@@ -298,6 +301,8 @@ TR = {
         "inst_err_prefix": "Installation error",
         "inst_sim_err": "SIMULATED ERROR: Connection lost during apt-get update!",
         "inst_cmd_fail": "Command failed (exit {rc}): {cmd}",
+        "inst_repo_unavail": "Repositories unreachable or package index unavailable. Please verify Internet connection and retry.",
+        "inst_dns_unavail": "DNS resolution failed for deb.debian.org. Please verify your Wi-Fi network has Internet access.",
     },
 }
 
@@ -513,6 +518,25 @@ class CallableWorker(QThread):
         self.done_sig.emit(res)
 
 
+def ensure_dns_servers():
+    """Garantisce che /etc/resolv.conf contenga sempre nameserver validi prima delle operazioni di rete."""
+    try:
+        has_ns = False
+        if os.path.exists("/etc/resolv.conf"):
+            with open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    if line.strip().startswith("nameserver") and len(line.strip().split()) >= 2:
+                        has_ns = True
+                        break
+        if not has_ns:
+            os.makedirs("/etc", exist_ok=True)
+            with open("/etc/resolv.conf", "a", encoding="utf-8") as f:
+                f.write("\n# NoteOS Fallback DNS\nnameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1\n")
+            return True
+    except Exception:
+        pass
+    return False
+
 
 # ==============================================================================
 # WORKER THREAD DI INSTALLAZIONE (IDEMPOTENTE E CON RIPROVA)
@@ -564,7 +588,11 @@ class InstallWorker(QThread):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
-            env={**os.environ, "DEBIAN_FRONTEND": "noninteractive"},
+            env={
+                **os.environ,
+                "DEBIAN_FRONTEND": "noninteractive",
+                "DEBCONF_NONINTERACTIVE_SEEN": "true",
+            },
         )
         for line in proc.stdout:
             self._log("  " + line.rstrip("\n"))
@@ -604,28 +632,35 @@ class InstallWorker(QThread):
                 self._log(self._tr("inst_sim_err"))
                 raise RuntimeError("apt update simulated failure")
 
+            # Assicura nameserver DNS prima di qualsiasi operazione di rete
+            if not self.dry_run:
+                ensure_dns_servers()
+
             # Se è stato selezionato VS Code, configura il repository ufficiale Microsoft armhf con signed-by
             selected_ids = set(self.state.get("selected_apps", []))
             if "code" in selected_ids:
                 self._log(self._tr("inst_log_vscode"))
                 if not self.dry_run:
-                    try:
-                        import base64
-                        os.makedirs("/etc/apt/keyrings", exist_ok=True)
-                        req = urllib.request.Request(
-                            "https://packages.microsoft.com/keys/microsoft.asc",
-                            headers={"User-Agent": "NoteOS-Setup/1.0 (GT-N8000)"}
-                        )
-                        with urllib.request.urlopen(req, timeout=15) as resp:
-                            asc = resp.read().decode("ascii", errors="ignore")
-                        b64_lines = [l.strip() for l in asc.splitlines() if l.strip() and not l.startswith("-----") and not l.startswith("=") and ":" not in l]
-                        with open("/etc/apt/keyrings/microsoft-archive-keyring.gpg", "wb") as kf:
-                            kf.write(base64.b64decode("".join(b64_lines)))
-                        os.chmod("/etc/apt/keyrings/microsoft-archive-keyring.gpg", 0o644)
-                        with open("/etc/apt/sources.list.d/vscode.list", "w") as f:
-                            f.write("deb [arch=armhf signed-by=/etc/apt/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main\n")
-                    except Exception as key_err:
-                        self._log(self._tr("inst_log_vscode_err", err=str(key_err)))
+                    key_file = "/etc/apt/keyrings/microsoft-archive-keyring.gpg"
+                    if not os.path.exists(key_file):
+                        try:
+                            import base64
+                            os.makedirs("/etc/apt/keyrings", exist_ok=True)
+                            req = urllib.request.Request(
+                                "https://packages.microsoft.com/keys/microsoft.asc",
+                                headers={"User-Agent": "NoteOS-Setup/1.0 (GT-N8000)"}
+                            )
+                            with urllib.request.urlopen(req, timeout=15) as resp:
+                                asc = resp.read().decode("ascii", errors="ignore")
+                            b64_lines = [l.strip() for l in asc.splitlines() if l.strip() and not l.startswith("-----") and not l.startswith("=") and ":" not in l]
+                            with open(key_file, "wb") as kf:
+                                kf.write(base64.b64decode("".join(b64_lines)))
+                            os.chmod(key_file, 0o644)
+                        except Exception as key_err:
+                            self._log(self._tr("inst_log_vscode_err", err=str(key_err)))
+                    os.makedirs("/etc/apt/sources.list.d", exist_ok=True)
+                    with open("/etc/apt/sources.list.d/vscode.list", "w") as f:
+                        f.write(f"deb [arch=armhf signed-by={key_file}] https://packages.microsoft.com/repos/code stable main\n")
 
             self._run_cmd(["apt-get", "update"])
 
@@ -637,19 +672,35 @@ class InstallWorker(QThread):
                 with open(list_path) as f:
                     desk_pkgs = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
 
+            # Verifica che il catalogo pacchetti sia disponibile e interrogabile
+            if not self.dry_run and desk_pkgs:
+                chk_pkg = desk_pkgs[0]
+                chk_proc = subprocess.run(
+                    ["apt-cache", "policy", chk_pkg],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+                )
+                if "Candidate: (none)" in chk_proc.stdout or "Unable to locate" in chk_proc.stderr:
+                    raise RuntimeError(self._tr("inst_repo_unavail"))
+
             installable_20, _, _ = resolve_apps_for_desktop(desk_id)
             app_pkgs = []
             for app in installable_20:
                 if app["id"] in selected_ids:
                     app_pkgs.extend(app["pkgs"])
 
+            apt_install_cmd = [
+                "apt-get", "install", "-y", "--no-install-recommends",
+                "-o", "Dpkg::Options::=--force-confdef",
+                "-o", "Dpkg::Options::=--force-confold",
+            ]
+
             self.progress_sig.emit(35, self._tr("inst_step_desk", desk=desk_id.upper(), cnt=len(desk_pkgs)))
             if desk_pkgs:
-                self._run_cmd(["apt-get", "install", "-y", "--no-install-recommends"] + desk_pkgs)
+                self._run_cmd(apt_install_cmd + desk_pkgs)
 
             self.progress_sig.emit(65, self._tr("inst_step_apps", cnt=len(app_pkgs)))
             if app_pkgs:
-                self._run_cmd(["apt-get", "install", "-y", "--no-install-recommends"] + app_pkgs)
+                self._run_cmd(apt_install_cmd + app_pkgs)
 
             self.progress_sig.emit(80, self._tr("inst_step_user"))
             username = self.state.get("username", "utente").strip()
@@ -1509,6 +1560,9 @@ class N8000SetupWizard(QMainWindow):
             if wait_dhcp:
                 time.sleep(1)
 
+        # Assicura la presenza di server DNS validi prima dei test
+        ensure_dns_servers()
+
         # 2. Test HTTP su repository Debian ed endpoint di fallback
         endpoints = [
             "http://deb.debian.org/debian/dists/bookworm/Release",
@@ -1529,18 +1583,37 @@ class N8000SetupWizard(QMainWindow):
             except Exception:
                 continue
 
-        # 3. Test ping IP pubblico per verificare se il DNS è temporaneamente lento
+        # Se il primo tentativo curl fallisce, rinforza /etc/resolv.conf e riprova
+        ensure_dns_servers()
+        for ep in endpoints:
+            try:
+                rc = subprocess.run(
+                    ["curl", "-4", "-fsSI", "--connect-timeout", "4", "--max-time", "6", ep],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=7
+                ).returncode
+                if rc == 0:
+                    net_label = self.state.get("wifi_ssid") or "Wi-Fi"
+                    if ip_assigned:
+                        net_label += f" ({ip_assigned})"
+                    return True, net_label, False
+            except Exception:
+                continue
+
+        # 3. Test ping IP pubblico per diagnosticare se la rete è attiva ma il DNS è bloccato
+        ping_ok = False
         try:
             ping_rc = subprocess.run(["ping", "-4", "-c", "1", "-W", "2", "1.1.1.1"],
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3).returncode
-            if ping_rc == 0:
-                net_label = (self.state.get("wifi_ssid") or "Wi-Fi") + " [Rete attiva, DNS lento]"
-                return True, net_label, False
+            ping_ok = (ping_rc == 0)
         except Exception:
             pass
 
+        if ping_ok:
+            # IP raggiungibile ma risoluzione DNS fallita: non permettere di proseguire al wizard
+            return False, "Wi-Fi connesso ma impossibile risolvere i domini (DNS non raggiungibile)", False
+
         if ip_assigned:
-            return False, f"Wi-Fi connesso con IP {ip_assigned}, ma accesso web a deb.debian.org non ancora pronto", True
+            return False, f"Wi-Fi connesso con IP {ip_assigned}, ma accesso web a deb.debian.org non pronto", True
 
         return False, "Nessun indirizzo IP ricevuto dal router (timeout DHCP o associazione non riuscita)", False
 
@@ -1630,6 +1703,8 @@ class N8000SetupWizard(QMainWindow):
                 "con-name", ssid, "ssid", ssid,
                 "ifname", "wlan0",
                 "connection.autoconnect", "yes",
+                "ipv4.dns", "1.1.1.1 8.8.8.8",
+                "ipv4.ignore-auto-dns", "no",
             ]
             if pw:
                 add_cmd += [
@@ -1642,6 +1717,7 @@ class N8000SetupWizard(QMainWindow):
 
             add_res = subprocess.run(add_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             if add_res.returncode == 0:
+                ensure_dns_servers()
                 up_res = subprocess.run(["nmcli", "--wait", "20", "connection", "up", ssid],
                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 if up_res.returncode != 0:

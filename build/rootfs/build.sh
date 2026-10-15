@@ -199,9 +199,9 @@ fi
 # 6. Generate package manifest with exact versions
 chroot "${ROOTFS_WORK}" dpkg-query -W -f='${Package}=${Version}\n' | LC_ALL=C sort > "${OUT_DIR}/packages.manifest"
 
-# 7. Privacy scrub: remove SSH host keys, empty machine-id, clean apt caches
+# 7. Privacy scrub: remove SSH host keys, empty machine-id, clean apt archive cache (preserve package lists)
 echo "--> Performing privacy scrub: removing SSH host keys, clearing machine-id and caches..."
-rm -rf "${ROOTFS_WORK}/var/cache/apt/archives/"*.deb "${ROOTFS_WORK}/var/lib/apt/lists/"* 2>/dev/null || true
+rm -rf "${ROOTFS_WORK}/var/cache/apt/archives/"*.deb "${ROOTFS_WORK}/var/lib/apt/lists/partial" "${ROOTFS_WORK}/var/lib/apt/lists/lock" 2>/dev/null || true
 rm -f "${ROOTFS_WORK}/etc/ssh/ssh_host_"*
 : > "${ROOTFS_WORK}/etc/machine-id"
 rm -f "${ROOTFS_WORK}/var/lib/dbus/machine-id"

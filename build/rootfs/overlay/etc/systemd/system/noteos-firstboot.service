@@ -2,7 +2,8 @@
 Description=NoteOS — Wizard Grafico Touch di Primo Avvio (noteos-setup)
 After=systemd-user-sessions.service NetworkManager.service noteos-resize-rootfs.service dbus.service plymouth-start.service
 Wants=NetworkManager.service dbus.service
-Conflicts=getty@tty1.service plymouth-quit.service plymouth-quit-wait.service
+Conflicts=getty@tty1.service sddm.service display-manager.service plymouth-quit.service plymouth-quit-wait.service
+Before=sddm.service display-manager.service
 ConditionPathExists=!/var/lib/noteos/setup.done
 
 [Service]
@@ -20,5 +21,5 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=multi-user.target graphical.target
+WantedBy=multi-user.target
 

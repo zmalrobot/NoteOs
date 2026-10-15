@@ -1,0 +1,29 @@
+#!/bin/sh
+# ==============================================================================
+# /etc/sddm/Xsetup — Inizializzazione Display e Backlight Hardware GT-N8000
+# Eseguito da SDDM come root prima della comparsa del greeter o del login.
+# ==============================================================================
+
+# 1. Unblank del framebuffer del kernel Linux
+for fb in /sys/class/graphics/fb*; do
+    if [ -d "$fb" ] && [ -f "$fb/blank" ]; then
+        echo 0 > "$fb/blank" 2>/dev/null || true
+    fi
+done
+
+# 2. Backlight al 50% PWM (quirk hardware N8000: 100% duty cycle spegne il pannello)
+for b in /sys/class/backlight/*; do
+    if [ -d "$b" ] && [ -f "$b/max_brightness" ]; then
+        echo $(( $(cat "$b/max_brightness") / 2 )) > "$b/brightness" 2>/dev/null || true
+    fi
+done
+
+# 3. Forzatura segnale DPMS e disabilitazione spegnimento schermo X11
+xset dpms force on 2>/dev/null || true
+xset s off 2>/dev/null || true
+xset -dpms 2>/dev/null || true
+xset s noblank 2>/dev/null || true
+xrandr --auto 2>/dev/null || true
+
+exit 0
+

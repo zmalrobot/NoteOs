@@ -187,6 +187,7 @@ HOSTS_EOF
     systemctl enable zramswap.service 2>/dev/null || true
     systemctl enable earlyoom.service 2>/dev/null || true
     systemctl enable noteos-resize-rootfs.service 2>/dev/null || true
+    systemctl set-default multi-user.target 2>/dev/null || true
     if [ -f /etc/systemd/system/noteos-firstboot.service ]; then
         systemctl enable noteos-firstboot.service 2>/dev/null || true
     fi

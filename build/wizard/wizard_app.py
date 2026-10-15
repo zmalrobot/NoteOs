@@ -827,7 +827,8 @@ class InstallWorker(QThread):
                     "",
                     "[X11]",
                     "MinimumVT=1",
-                    "ServerArguments=-nolisten tcp vt1",
+                    "ServerArguments=-nolisten tcp",
+                    "DisplayCommand=/etc/sddm/Xsetup",
                     "",
                 ]
                 if autologin:
@@ -840,18 +841,56 @@ class InstallWorker(QThread):
                     ])
                 os.makedirs("/etc/sddm.conf.d", exist_ok=True)
                 with open("/etc/sddm.conf.d/noteos.conf", "w") as f:
-                    f.write("\n".join(sddm_lines))
+                    f.write("\n".join(sddm_lines) + "\n")
 
-                # Drop-in per sincronizzazione con Plymouth (evita lockup EBUSY su /dev/dri/card0)
+                # Inizializzazione hardware unblank e backlight 50% PWM prima di avviare il display
+                xsetup_script = (
+                    "#!/bin/sh\n"
+                    "for fb in /sys/class/graphics/fb*; do\n"
+                    "    [ -f \"$fb/blank\" ] && echo 0 > \"$fb/blank\" 2>/dev/null || true\n"
+                    "done\n"
+                    "for b in /sys/class/backlight/*; do\n"
+                    "    if [ -f \"$b/max_brightness\" ]; then\n"
+                    "        echo $(( $(cat \"$b/max_brightness\") / 2 )) > \"$b/brightness\" 2>/dev/null || true\n"
+                    "    fi\n"
+                    "done\n"
+                    "xset dpms force on 2>/dev/null || true\n"
+                    "xset s off 2>/dev/null || true\n"
+                    "xset -dpms 2>/dev/null || true\n"
+                    "xset s noblank 2>/dev/null || true\n"
+                    "xrandr --auto 2>/dev/null || true\n"
+                    "exit 0\n"
+                )
+                os.makedirs("/etc/sddm", exist_ok=True)
+                with open("/etc/sddm/Xsetup", "w") as f:
+                    f.write(xsetup_script)
+                os.chmod("/etc/sddm/Xsetup", 0o755)
+                if os.path.isdir("/usr/share/sddm/scripts"):
+                    with open("/usr/share/sddm/scripts/Xsetup", "w") as f:
+                        f.write(xsetup_script)
+                    os.chmod("/usr/share/sddm/scripts/Xsetup", 0o755)
+
+                # Drop-in per sincronizzazione sincrona con Plymouth (evita lockup EBUSY su /dev/dri/card0)
                 os.makedirs("/etc/systemd/system/sddm.service.d", exist_ok=True)
                 with open("/etc/systemd/system/sddm.service.d/plymouth.conf", "w") as f:
-                    f.write("[Unit]\nConflicts=plymouth-quit-wait.service\nAfter=plymouth-quit.service plymouth-start.service plymouth-quit-wait.service\nOnFailure=plymouth-quit.service\n")
+                    f.write("[Unit]\nDescription=NoteOS SDDM Plymouth Synchronization Drop-in\nWants=plymouth-quit.service plymouth-quit-wait.service\nAfter=plymouth-quit.service plymouth-quit-wait.service\n")
 
                 # Assegna utente sddm ai gruppi grafici e DRM per accelerazione Mesa Lima
                 self._run_cmd(["usermod", "-a", "-G", "video,render,input", "sddm"], check=False)
 
-                # Disabilita il servizio firstboot per evitare che la clausola Conflicts blocchi sddm
+                # Handover atomico: mascheramento permanente del servizio firstboot
                 self._run_cmd(["systemctl", "disable", "noteos-firstboot.service"], check=False)
+                self._run_cmd(["systemctl", "mask", "noteos-firstboot.service"], check=False)
+                for w in [
+                    "/etc/systemd/system/graphical.target.wants/noteos-firstboot.service",
+                    "/etc/systemd/system/multi-user.target.wants/noteos-firstboot.service",
+                ]:
+                    if os.path.exists(w) or os.path.islink(w):
+                        try:
+                            os.unlink(w)
+                        except Exception:
+                            pass
+                self._run_cmd(["systemctl", "unmask", "sddm.service"], check=False)
                 self._run_cmd(["systemctl", "enable", "sddm.service"], check=False)
                 self._run_cmd(["systemctl", "set-default", "graphical.target"], check=False)
 

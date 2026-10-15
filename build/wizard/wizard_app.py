@@ -825,6 +825,10 @@ class InstallWorker(QThread):
                     "[Theme]",
                     f"Current={sddm_theme}",
                     "",
+                    "[X11]",
+                    "MinimumVT=1",
+                    "ServerArguments=-nolisten tcp vt1",
+                    "",
                 ]
                 if autologin:
                     sddm_lines.extend([
@@ -834,9 +838,20 @@ class InstallWorker(QThread):
                         "Relogin=false",
                         "",
                     ])
+                os.makedirs("/etc/sddm.conf.d", exist_ok=True)
                 with open("/etc/sddm.conf.d/noteos.conf", "w") as f:
                     f.write("\n".join(sddm_lines))
 
+                # Drop-in per sincronizzazione con Plymouth (evita lockup EBUSY su /dev/dri/card0)
+                os.makedirs("/etc/systemd/system/sddm.service.d", exist_ok=True)
+                with open("/etc/systemd/system/sddm.service.d/plymouth.conf", "w") as f:
+                    f.write("[Unit]\nConflicts=plymouth-quit-wait.service\nAfter=plymouth-quit.service plymouth-start.service plymouth-quit-wait.service\nOnFailure=plymouth-quit.service\n")
+
+                # Assegna utente sddm ai gruppi grafici e DRM per accelerazione Mesa Lima
+                self._run_cmd(["usermod", "-a", "-G", "video,render,input", "sddm"], check=False)
+
+                # Disabilita il servizio firstboot per evitare che la clausola Conflicts blocchi sddm
+                self._run_cmd(["systemctl", "disable", "noteos-firstboot.service"], check=False)
                 self._run_cmd(["systemctl", "enable", "sddm.service"], check=False)
                 self._run_cmd(["systemctl", "set-default", "graphical.target"], check=False)
 

@@ -34,6 +34,9 @@ Section: misc
 Priority: optional
 Architecture: all
 Maintainer: NoteOS Project <maintainers@noteos.local>
+Provides: lxqt-branding
+Replaces: lxqt-branding-debian
+Conflicts: lxqt-branding-debian
 Description: Identita di sistema, tema scuro, sfondi e boot animation per NoteOS
  Pacchetto ufficiale di branding per NoteOS (basato su Debian 12 bookworm).
  Configura /etc/os-release tramite dpkg-divert, il tema Plymouth NoteOS,

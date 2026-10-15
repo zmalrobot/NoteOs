@@ -671,6 +671,9 @@ class InstallWorker(QThread):
                 with open(list_path) as f:
                     desk_pkgs = [l.strip() for l in f if l.strip() and not l.strip().startswith("#")]
 
+            # Escludi pacchetti branding Debian che confliggono con noteos-branding
+            desk_pkgs = [p for p in desk_pkgs if p != "lxqt-branding-debian"]
+
             # Opzioni di rete resilienti per APT (IPv4 forzato, 5 tentativi, no pipelining su CDN, timeout 30s)
             apt_net_opts = [
                 "-o", "Acquire::ForceIPv4=true",
@@ -743,12 +746,23 @@ class InstallWorker(QThread):
                 "apt-get", "install", "-y", "--no-install-recommends",
                 "-o", "Dpkg::Options::=--force-confdef",
                 "-o", "Dpkg::Options::=--force-confold",
+                "-o", "Dpkg::Options::=--force-overwrite",
                 "--fix-missing",
             ] + apt_net_opts
 
+            # Recovery dpkg preliminare per ripulire eventuali stati interrotti
+            if not self.dry_run:
+                self._run_cmd(["dpkg", "--configure", "-a"], check=False)
+
             self.progress_sig.emit(35, self._tr("inst_step_desk", desk=desk_id.upper(), cnt=len(desk_pkgs)))
             if desk_pkgs:
-                self._run_cmd(apt_install_cmd + desk_pkgs)
+                try:
+                    self._run_cmd(apt_install_cmd + desk_pkgs)
+                except Exception as e:
+                    self._log(f"Avviso durante installazione desktop ({e}). Tentativo auto-recovery dpkg...")
+                    self._run_cmd(["dpkg", "--configure", "-a"], check=False)
+                    self._run_cmd(["apt-get", "install", "-f", "-y"] + apt_net_opts, check=False)
+                    self._run_cmd(apt_install_cmd + desk_pkgs)
 
             self.progress_sig.emit(65, self._tr("inst_step_apps", cnt=len(app_pkgs)))
             if app_pkgs:
@@ -756,7 +770,13 @@ class InstallWorker(QThread):
                     app_pkgs = [p for p in app_pkgs if p != "code"]
                     self._log("VS Code non installabile (server Microsoft non raggiungibile): verrà saltato.")
                 if app_pkgs:
-                    self._run_cmd(apt_install_cmd + app_pkgs)
+                    try:
+                        self._run_cmd(apt_install_cmd + app_pkgs)
+                    except Exception as e:
+                        self._log(f"Avviso durante installazione app ({e}). Tentativo auto-recovery dpkg...")
+                        self._run_cmd(["dpkg", "--configure", "-a"], check=False)
+                        self._run_cmd(["apt-get", "install", "-f", "-y"] + apt_net_opts, check=False)
+                        self._run_cmd(apt_install_cmd + app_pkgs)
 
             self.progress_sig.emit(80, self._tr("inst_step_user"))
             username = self.state.get("username", "utente").strip()

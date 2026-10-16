@@ -520,20 +520,38 @@ class CallableWorker(QThread):
 
 
 def ensure_dns_servers():
-    """Garantisce che /etc/resolv.conf contenga sempre nameserver validi prima delle operazioni di rete."""
+    """Garantisce che /etc/resolv.conf contenga sempre nameserver validi e veloci (Cloudflare/Google) in cima."""
     try:
-        has_ns = False
+        primary_ns = ["1.1.1.1", "8.8.8.8", "1.0.0.1"]
+        existing_lines = []
+        existing_ns = []
         if os.path.exists("/etc/resolv.conf"):
             with open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore") as f:
                 for line in f:
-                    if line.strip().startswith("nameserver") and len(line.strip().split()) >= 2:
-                        has_ns = True
-                        break
-        if not has_ns:
-            os.makedirs("/etc", exist_ok=True)
-            with open("/etc/resolv.conf", "a", encoding="utf-8") as f:
-                f.write("\n# NoteOS Fallback DNS\nnameserver 1.1.1.1\nnameserver 8.8.8.8\nnameserver 1.0.0.1\n")
-            return True
+                    sline = line.strip()
+                    if sline.startswith("nameserver") and len(sline.split()) >= 2:
+                        ns = sline.split()[1].strip()
+                        if ns not in existing_ns:
+                            existing_ns.append(ns)
+                    elif not sline.startswith("options") and not sline.startswith("# NoteOS"):
+                        existing_lines.append(line)
+
+        all_ns = list(primary_ns)
+        for ns in existing_ns:
+            if ns not in all_ns:
+                all_ns.append(ns)
+
+        out_lines = [
+            "# NoteOS Resilient Resolver Configuration\n",
+            "options timeout:2 attempts:3 rotate\n",
+        ]
+        for ns in all_ns[:3]:
+            out_lines.append(f"nameserver {ns}\n")
+
+        os.makedirs("/etc", exist_ok=True)
+        with open("/etc/resolv.conf", "w", encoding="utf-8") as f:
+            f.writelines(out_lines)
+        return True
     except Exception:
         pass
     return False
@@ -601,6 +619,97 @@ class InstallWorker(QThread):
         if check and rc != 0:
             raise RuntimeError(self._tr("inst_cmd_fail", rc=rc, cmd=' '.join(cmd)))
         return rc
+
+    APT_NET_OPTS = [
+        "-o", "Acquire::ForceIPv4=true",
+        "-o", "Acquire::Retries=5",
+        "-o", "Acquire::http::Timeout=30",
+        "-o", "Acquire::https::Timeout=30",
+        "-o", "Acquire::http::Pipeline-Depth=0",
+        "-o", "Acquire::https::Pipeline-Depth=0",
+    ]
+
+    def _ensure_network_connected(self, timeout=25):
+        """Verifica la connettività di rete / DNS e tenta la riconnessione automatica se caduta."""
+        if self.dry_run:
+            return True
+        ensure_dns_servers()
+        subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        def _is_online():
+            try:
+                import socket
+                socket.getaddrinfo("deb.debian.org", 80, socket.AF_INET)
+                return True
+            except Exception:
+                pass
+            try:
+                rc = subprocess.run(["ping", "-c", "1", "-W", "2", "1.1.1.1"],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode
+                if rc == 0:
+                    ensure_dns_servers()
+                    return True
+            except Exception:
+                pass
+            return False
+
+        if _is_online():
+            return True
+
+        self._log("Connessione di rete/DNS non attiva. Tentativo di ripristino del link...")
+        ssid = self.state.get("wifi_ssid")
+        if ssid:
+            self._log(f"Riconnessione a '{ssid}'...")
+            subprocess.run(["nmcli", "connection", "up", ssid], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run(["nmcli", "device", "connect", "wlan0"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(2)
+            ensure_dns_servers()
+            subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if _is_online():
+                self._log("Connessione di rete ripristinata con successo.")
+                return True
+
+        self._log("Attenzione: link di rete ancora non raggiungibile, procedo con il tentativo.")
+        return False
+
+    def _install_packages_with_retry(self, base_cmd, pkgs, max_attempts=5):
+        """Esegue l'installazione APT con tentativi multipli, ripristino di rete e resume dei download parziali."""
+        if not pkgs:
+            return True
+        last_exc = None
+        for attempt in range(1, max_attempts + 1):
+            if not self.dry_run:
+                self._ensure_network_connected()
+                if attempt > 1:
+                    self._log(f"Auto-recovery dpkg prima del tentativo {attempt}/{max_attempts}...")
+                    self._run_cmd(["dpkg", "--configure", "-a"], check=False)
+                    self._run_cmd(["apt-get", "install", "-f", "-y"] + self.APT_NET_OPTS, check=False)
+            try:
+                rc = self._run_cmd(base_cmd + pkgs, check=False)
+                if rc == 0:
+                    return True
+                self._log(f"Installazione pacchetti terminata con codice {rc} al tentativo {attempt}/{max_attempts}.")
+                last_exc = RuntimeError(self._tr("inst_cmd_fail", rc=rc, cmd=' '.join(base_cmd + pkgs[:3]) + "..."))
+            except Exception as e:
+                last_exc = e
+                self._log(f"Errore durante l'installazione ({e}) al tentativo {attempt}/{max_attempts}.")
+
+            if attempt < max_attempts:
+                backoff = min(15, 3 + attempt * 2)
+                self._log(f"Attesa di {backoff}s prima del nuovo tentativo...")
+                time.sleep(backoff)
+
+        if last_exc:
+            raise last_exc
+        return False
 
     def run(self):
         try:
@@ -674,23 +783,11 @@ class InstallWorker(QThread):
             # Escludi pacchetti branding Debian che confliggono con noteos-branding
             desk_pkgs = [p for p in desk_pkgs if p != "lxqt-branding-debian"]
 
-            # Opzioni di rete resilienti per APT (IPv4 forzato, 5 tentativi, no pipelining su CDN, timeout 30s)
-            apt_net_opts = [
-                "-o", "Acquire::ForceIPv4=true",
-                "-o", "Acquire::Retries=5",
-                "-o", "Acquire::http::Timeout=30",
-                "-o", "Acquire::https::Timeout=30",
-                "-o", "Acquire::http::Pipeline-Depth=0",
-                "-o", "Acquire::https::Pipeline-Depth=0",
-            ]
-
             update_ok = False
             for attempt in range(1, 4):
                 if not self.dry_run:
-                    ensure_dns_servers()
-                    subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
-                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                rc = self._run_cmd(["apt-get", "update"] + apt_net_opts, check=False)
+                    self._ensure_network_connected()
+                rc = self._run_cmd(["apt-get", "update"] + self.APT_NET_OPTS, check=False)
                 if rc == 0:
                     update_ok = True
                     break
@@ -707,7 +804,7 @@ class InstallWorker(QThread):
                     os.rename(vscode_list, vscode_list + ".disabled")
                 except Exception:
                     pass
-                rc = self._run_cmd(["apt-get", "update"] + apt_net_opts, check=False)
+                rc = self._run_cmd(["apt-get", "update"] + self.APT_NET_OPTS, check=False)
                 if rc == 0:
                     update_ok = True
 
@@ -748,7 +845,7 @@ class InstallWorker(QThread):
                 "-o", "Dpkg::Options::=--force-confold",
                 "-o", "Dpkg::Options::=--force-overwrite",
                 "--fix-missing",
-            ] + apt_net_opts
+            ] + self.APT_NET_OPTS
 
             # Recovery dpkg preliminare per ripulire eventuali stati interrotti
             if not self.dry_run:
@@ -756,13 +853,7 @@ class InstallWorker(QThread):
 
             self.progress_sig.emit(35, self._tr("inst_step_desk", desk=desk_id.upper(), cnt=len(desk_pkgs)))
             if desk_pkgs:
-                try:
-                    self._run_cmd(apt_install_cmd + desk_pkgs)
-                except Exception as e:
-                    self._log(f"Avviso durante installazione desktop ({e}). Tentativo auto-recovery dpkg...")
-                    self._run_cmd(["dpkg", "--configure", "-a"], check=False)
-                    self._run_cmd(["apt-get", "install", "-f", "-y"] + apt_net_opts, check=False)
-                    self._run_cmd(apt_install_cmd + desk_pkgs)
+                self._install_packages_with_retry(apt_install_cmd, desk_pkgs, max_attempts=5)
 
             self.progress_sig.emit(65, self._tr("inst_step_apps", cnt=len(app_pkgs)))
             if app_pkgs:
@@ -770,13 +861,7 @@ class InstallWorker(QThread):
                     app_pkgs = [p for p in app_pkgs if p != "code"]
                     self._log("VS Code non installabile (server Microsoft non raggiungibile): verrà saltato.")
                 if app_pkgs:
-                    try:
-                        self._run_cmd(apt_install_cmd + app_pkgs)
-                    except Exception as e:
-                        self._log(f"Avviso durante installazione app ({e}). Tentativo auto-recovery dpkg...")
-                        self._run_cmd(["dpkg", "--configure", "-a"], check=False)
-                        self._run_cmd(["apt-get", "install", "-f", "-y"] + apt_net_opts, check=False)
-                        self._run_cmd(apt_install_cmd + app_pkgs)
+                    self._install_packages_with_retry(apt_install_cmd, app_pkgs, max_attempts=5)
 
             self.progress_sig.emit(80, self._tr("inst_step_user"))
             username = self.state.get("username", "utente").strip()
@@ -1936,6 +2021,7 @@ class N8000SetupWizard(QMainWindow):
                 "802-11-wireless.powersave", "2",
                 "802-11-wireless.band", "bg",
                 "ipv4.dns", "1.1.1.1 8.8.8.8",
+                "ipv4.dns-priority", "-50",
                 "ipv4.ignore-auto-dns", "no",
                 "ipv6.method", "disabled",
             ]

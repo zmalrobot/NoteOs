@@ -1,0 +1,86 @@
+# BCM4334 Murata NVRAM Calibration for Samsung Galaxy Note 10.1 (GT-N8000)
+# High-gain RF calibration with Murata LNA / PA tuning & IT regdom
+
+manfid=0x2d0
+prodid=0x05c1
+vendid=0x14e4
+devid=0x4380
+boardtype=0x05de
+boardrev=0x1200
+boardnum=22
+sromrev=3
+
+boardflags=0x10081a01
+xtalfreq=37400
+nocrc=1
+ag0=252
+aa2g=1
+ccode=IT
+
+# Power Calibration for 2.4 GHz
+pa0itssit=0x20
+pa0b0=0x15a3
+pa0b1=0xfd30
+pa0b2=0xff17
+tssifloor2g=24
+extpagain2g=2
+extpagain5g=2
+cckPwrOffset=8
+
+# RSSI parameters for 2.4 GHz
+rssismf2g=0xf
+rssismc2g=0x9
+rssisav2g=0x1
+
+# RSSI parameters for 5 GHz
+rssismf5g=0x9
+rssismc5g=0x9
+rssisav5g=0x1
+
+# Power Calibration for 5 GHz
+pa1lob0=0x1532
+pa1lob1=0xfd5e
+pa1lob2=0xff3e
+tssifloor5gl=26
+pa1b0=0x1542
+pa1b1=0xfd67
+pa1b2=0xff51
+tssifloor5gm=26
+pa1hib0=0x1544
+pa1hib1=0xfd4c
+pa1hib2=0xff42
+tssifloor5gh=26
+
+PwrOffset40mhz2g=4
+PwrOffset40mhz5g=-10
+rxpo5g=0
+
+# 2.4 GHz Target Power & Offsets
+maxp2ga0=0x50
+ofdm2gpo=0x88888887
+mcs2gpo0=0xaaaa
+mcs2gpo1=0xaaaa
+mcs2gpo2=0xaaaa
+mcs2gpo3=0xaaaa
+
+# 5 GHz Target Power & Offsets
+maxp5gla0=0x4a
+ofdm5glpo=0x54333111
+mcs5glpo0=0x5333
+mcs5glpo1=0x7655
+mcs5glpo2=0x9999
+mcs5glpo3=0x9999
+
+maxp5ga0=0x4a
+ofdm5gpo=0x43222000
+mcs5gpo0=0x4222
+mcs5gpo1=0x6544
+mcs5gpo2=0x8888
+mcs5gpo3=0x8888
+
+maxp5gha0=0x4a
+ofdm5ghpo=0x43222000
+mcs5ghpo0=0x4222
+mcs5ghpo1=0x6544
+mcs5ghpo2=0x8888
+mcs5ghpo3=0x8888

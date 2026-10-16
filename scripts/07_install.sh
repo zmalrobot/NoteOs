@@ -286,19 +286,29 @@ stage_firmware() {
         return 0
     fi
 
-    log_info "Installing verified firmware blobs into /mnt/lib/firmware/brcm/..."
-    adb shell "mkdir -p /mnt/lib/firmware/brcm"
+    log_info "Installing verified firmware blobs into /mnt/lib/firmware/brcm/ and /mnt/usr/lib/firmware/brcm/..."
+    adb shell "mkdir -p /mnt/lib/firmware/brcm /mnt/usr/lib/firmware/brcm"
     for fw in "${required_fw[@]}"; do
         adb push "${fw_dir}/${fw}" "/mnt/lib/firmware/brcm/${fw}"
+        adb push "${fw_dir}/${fw}" "/mnt/usr/lib/firmware/brcm/${fw}" 2>/dev/null || true
     done
     if [ -f "${fw_dir}/brcmfmac4334-sdio.samsung,n8000.txt" ]; then
         adb push "${fw_dir}/brcmfmac4334-sdio.samsung,n8000.txt" "/mnt/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt"
+        adb push "${fw_dir}/brcmfmac4334-sdio.samsung,n8000.txt" "/mnt/usr/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt" 2>/dev/null || true
     else
         adb shell "cp -f /mnt/lib/firmware/brcm/brcmfmac4334-sdio.txt /mnt/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt"
+        adb shell "cp -f /mnt/lib/firmware/brcm/brcmfmac4334-sdio.txt /mnt/usr/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt 2>/dev/null || true"
     fi
-    adb shell "chmod 0644 /mnt/lib/firmware/brcm/*"
+    adb shell "chmod 0644 /mnt/lib/firmware/brcm/* /mnt/usr/lib/firmware/brcm/* 2>/dev/null || true"
+
+    # Integrity verification: ensure NVRAM calibrations are non-empty before unmounting
+    local chk
+    chk=$(adb shell "([ -s /mnt/usr/lib/firmware/brcm/brcmfmac4334-sdio.txt ] || [ -s /mnt/lib/firmware/brcm/brcmfmac4334-sdio.txt ]) && echo OK" | tr -d '\r\n ')
+    if [ "${chk}" != "OK" ]; then
+        die "Firmware verification failed: brcmfmac4334-sdio.txt is missing or empty on /mnt!"
+    fi
     adb shell "sync && umount /mnt"
-    log_success "Proprietary Wi-Fi and Bluetooth firmware installed cleanly."
+    log_success "Proprietary Wi-Fi and Bluetooth firmware installed and verified cleanly."
 }
 
 # STAGE 6: BOOT

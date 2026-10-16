@@ -33,8 +33,9 @@ done
 # Disattiva console blanking sul terminale virtuale attivo (VT1)
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
-# Disattiva esplicitamente il risparmio energetico Wi-Fi per BCM4334
+# Disattiva esplicitamente il risparmio energetico Wi-Fi e imposta regdom IT per massima potenza RF
 iw dev wlan0 set power_save off 2>/dev/null || true
+iw reg set IT 2>/dev/null || true
 
 cat << 'XINIT_EOF' > /tmp/noteos-kiosk-xinitrc
 # Force display power on immediately and disable blanking/standby

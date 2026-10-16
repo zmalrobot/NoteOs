@@ -32,12 +32,15 @@ build/initramfs_root/
 *.fw
 *.cal
 nvram*
-firmware/
+/firmware/
 vendor/
 
-# Explicit whitelist exceptions ONLY for release artifacts
+# Explicit whitelist exceptions ONLY for release artifacts and overlay calibrations
 !release/boot.img
 !release/boot-debug.img
+!build/rootfs/overlay/usr/lib/firmware/
+!build/rootfs/overlay/usr/lib/firmware/brcm/
+!build/rootfs/overlay/usr/lib/firmware/brcm/*.txt
 
 # 4. Secrets, keys and local environment
 .env

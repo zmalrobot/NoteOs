@@ -1923,12 +1923,18 @@ class N8000SetupWizard(QMainWindow):
             # Stage 1: Create persistent connection profile with PMF disabled (wifi-sec.pmf 1) and psk-flags 0
             # This prevents status_code=16 rejection from Broadcom BCM4334 chip on modern routers
             # wifi-sec.psk-flags 0 ensures the secret is stored in system keyfile and not agent-owned
+            # 802-11-wireless.band bg locks to 2.4 GHz for high-gain Murata PA/LNA RF performance
+            subprocess.run(["iw", "reg", "set", "IT"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(["iw", "dev", "wlan0", "set", "power_save", "off"], check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             add_cmd = [
                 "nmcli", "connection", "add", "type", "wifi",
                 "con-name", ssid, "ssid", ssid,
                 "ifname", "wlan0",
                 "connection.autoconnect", "yes",
                 "802-11-wireless.powersave", "2",
+                "802-11-wireless.band", "bg",
                 "ipv4.dns", "1.1.1.1 8.8.8.8",
                 "ipv4.ignore-auto-dns", "no",
                 "ipv6.method", "disabled",

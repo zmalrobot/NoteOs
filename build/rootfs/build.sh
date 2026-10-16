@@ -92,6 +92,121 @@ rm -rf "${ROOTFS_WORK}/etc/systemd/system/n8000-"*.service \
        "${ROOTFS_WORK}/usr/sbin/n8000-setup" 2>/dev/null || true
 cp -a "${BUILD_DIR}/rootfs/overlay/." "${ROOTFS_WORK}/"
 
+# 2b. Ensure Wi-Fi & Bluetooth firmware and Murata high-gain NVRAM calibration are present
+echo "--> Verifying and staging Wi-Fi & Bluetooth firmware in ${ROOTFS_WORK}/usr/lib/firmware/brcm/..."
+mkdir -p "${ROOTFS_WORK}/usr/lib/firmware/brcm"
+
+# Import any proprietary firmware files if present (e.g., BCM4334B0.hcd, brcmfmac4334-sdio.bin)
+if [ -d "${REPO_ROOT}/proprietary" ]; then
+    for fw in "${REPO_ROOT}/proprietary"/brcmfmac4334* "${REPO_ROOT}/proprietary"/BCM4334*; do
+        if [ -f "$fw" ]; then
+            cp -f "$fw" "${ROOTFS_WORK}/usr/lib/firmware/brcm/"
+        fi
+    done
+fi
+
+# Ensure Murata high-gain NVRAM calibration is present for both generic and device-tree board names
+if [ ! -s "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.txt" ]; then
+    echo "    Generating Murata high-gain NVRAM calibration..."
+    cat << 'NVRAM_EOF' > "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.txt"
+# BCM4334 Murata NVRAM Calibration for Samsung Galaxy Note 10.1 (GT-N8000)
+# High-gain RF calibration with Murata LNA / PA tuning & IT regdom
+
+manfid=0x2d0
+prodid=0x05c1
+vendid=0x14e4
+devid=0x4380
+boardtype=0x05de
+boardrev=0x1200
+boardnum=22
+sromrev=3
+
+boardflags=0x10081a01
+xtalfreq=37400
+nocrc=1
+ag0=252
+aa2g=1
+ccode=IT
+
+# Power Calibration for 2.4 GHz
+pa0itssit=0x20
+pa0b0=0x15a3
+pa0b1=0xfd30
+pa0b2=0xff17
+tssifloor2g=24
+extpagain2g=2
+extpagain5g=2
+cckPwrOffset=8
+
+# RSSI parameters for 2.4 GHz
+rssismf2g=0xf
+rssismc2g=0x9
+rssisav2g=0x1
+
+# RSSI parameters for 5 GHz
+rssismf5g=0x9
+rssismc5g=0x9
+rssisav5g=0x1
+
+# Power Calibration for 5 GHz
+pa1lob0=0x1532
+pa1lob1=0xfd5e
+pa1lob2=0xff3e
+tssifloor5gl=26
+pa1b0=0x1542
+pa1b1=0xfd67
+pa1b2=0xff51
+tssifloor5gm=26
+pa1hib0=0x1544
+pa1hib1=0xfd4c
+pa1hib2=0xff42
+tssifloor5gh=26
+
+PwrOffset40mhz2g=4
+PwrOffset40mhz5g=-10
+rxpo5g=0
+
+# 2.4 GHz Target Power & Offsets
+maxp2ga0=0x50
+ofdm2gpo=0x88888887
+mcs2gpo0=0xaaaa
+mcs2gpo1=0xaaaa
+mcs2gpo2=0xaaaa
+mcs2gpo3=0xaaaa
+
+# 5 GHz Target Power & Offsets
+maxp5gla0=0x4a
+ofdm5glpo=0x54333111
+mcs5glpo0=0x5333
+mcs5glpo1=0x7655
+mcs5glpo2=0x9999
+mcs5glpo3=0x9999
+
+maxp5ga0=0x4a
+ofdm5gpo=0x43222000
+mcs5gpo0=0x4222
+mcs5gpo1=0x6544
+mcs5gpo2=0x8888
+mcs5gpo3=0x8888
+
+maxp5gha0=0x4a
+ofdm5ghpo=0x43222000
+mcs5ghpo0=0x4222
+mcs5ghpo1=0x6544
+mcs5ghpo2=0x8888
+mcs5ghpo3=0x8888
+NVRAM_EOF
+fi
+
+cp -f "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.txt" "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt"
+chmod 0644 "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio"*
+
+# Compatibility fallback if /lib is not a symlink to usr/lib
+if [ ! -L "${ROOTFS_WORK}/lib" ] && [ -d "${ROOTFS_WORK}/lib" ]; then
+    mkdir -p "${ROOTFS_WORK}/lib/firmware/brcm"
+    cp -af "${ROOTFS_WORK}/usr/lib/firmware/brcm/." "${ROOTFS_WORK}/lib/firmware/brcm/"
+fi
+
 # 3. Install compiled kernel modules
 echo "--> Installing kernel modules in ${ROOTFS_WORK}/lib/modules/..."
 mkdir -p "${ROOTFS_WORK}/lib/modules"
@@ -187,6 +302,7 @@ HOSTS_EOF
     systemctl enable zramswap.service 2>/dev/null || true
     systemctl enable earlyoom.service 2>/dev/null || true
     systemctl enable noteos-resize-rootfs.service 2>/dev/null || true
+    systemctl enable wifi-regdom.service 2>/dev/null || true
     systemctl set-default multi-user.target 2>/dev/null || true
     if [ -f /etc/systemd/system/noteos-firstboot.service ]; then
         systemctl enable noteos-firstboot.service 2>/dev/null || true
@@ -215,6 +331,13 @@ rm -rf "${ROOTFS_WORK}/root/.bash_history"
 rm -rf "${ROOTFS_WORK}/home/"*
 
 cleanup_mounts
+
+# Verify essential Wi-Fi & BT firmware before packaging
+if [ ! -s "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.txt" ] || [ ! -s "${ROOTFS_WORK}/usr/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt" ]; then
+    echo "CRITICAL ERROR: Murata Wi-Fi NVRAM calibration missing in ${ROOTFS_WORK}/usr/lib/firmware/brcm/!" >&2
+    exit 1
+fi
+echo "    Verified Murata Wi-Fi NVRAM calibration present in rootfs."
 
 # 8. Deterministic rootfs.tar.gz packaging
 echo "--> Deterministic packaging of ${ROOTFS_TAR_GZ}..."

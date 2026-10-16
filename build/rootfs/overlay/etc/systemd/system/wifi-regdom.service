@@ -1,0 +1,12 @@
+[Unit]
+Description=Set Wi-Fi Regulatory Domain to IT
+Before=network-pre.target NetworkManager.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/iw reg set IT
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

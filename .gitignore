@@ -60,3 +60,5 @@ Thumbs.db
 .vscode/
 .idea/
 
+release/*.tar*
+release/*.deb

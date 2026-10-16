@@ -299,6 +299,24 @@ stage_firmware() {
         adb shell "cp -f /mnt/lib/firmware/brcm/brcmfmac4334-sdio.txt /mnt/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt"
         adb shell "cp -f /mnt/lib/firmware/brcm/brcmfmac4334-sdio.txt /mnt/usr/lib/firmware/brcm/brcmfmac4334-sdio.samsung,n8000.txt 2>/dev/null || true"
     fi
+
+    # Dynamic Hardware MAC restoration from Samsung EFS partition (/wifi/.mac.info)
+    log_info "Restoring device factory MAC address from EFS partition..."
+    adb shell "mkdir -p /tmp/efs && mount /dev/block/mmcblk0p3 /tmp/efs 2>/dev/null || true"
+    local hw_mac
+    hw_mac=$(adb shell "cat /tmp/efs/wifi/.mac.info 2>/dev/null | tr -d '\r\n ' | tr '[:upper:]' '[:lower:]'")
+    adb shell "umount /tmp/efs 2>/dev/null || true"
+    if [[ "${hw_mac}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
+        log_info "Found factory MAC in EFS: ${hw_mac:0:8}**:**:**"
+        adb shell "sed -i \"s/^macaddr=.*/macaddr=${hw_mac}/\" /mnt/usr/lib/firmware/brcm/brcmfmac4334-sdio*.txt /mnt/lib/firmware/brcm/brcmfmac4334-sdio*.txt 2>/dev/null || true"
+    else
+        log_warn "Factory MAC not found in EFS. Retaining standard fallback MAC."
+    fi
+
+    # Upstream regulatory database alternatives (validates kernel 6.6 built-in X.509 certs)
+    adb shell "ln -sf /lib/firmware/regulatory.db-upstream /mnt/etc/alternatives/regulatory.db 2>/dev/null || true"
+    adb shell "ln -sf /lib/firmware/regulatory.db.p7s-upstream /mnt/etc/alternatives/regulatory.db.p7s 2>/dev/null || true"
+
     adb shell "chmod 0644 /mnt/lib/firmware/brcm/* /mnt/usr/lib/firmware/brcm/* 2>/dev/null || true"
 
     # Integrity verification: ensure NVRAM calibrations are non-empty before unmounting

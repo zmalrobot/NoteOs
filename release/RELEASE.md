@@ -134,6 +134,6 @@ Tutti gli asset di release possono essere verificati tramite `sha256sum`:
 ```
 3812472f92f3b8ec5e2e07470efbe169f587a5042e06957982f85bc3202d0c9b  boot.img
 42b24cc9a623e8313efa37650ef1d57de6af5ca7591bbb67b1b1fad105e4fbfa  boot-debug.img
-c7ee424d38a35ee1e5490428410cc47ac83471bf4d2dd9cdbad9695a9ffee7b4  rootfs.tar.gz
+3e28a4e9c7d5db52001f23107b550c8d4901ebe3613374c94cc7b690d9967e4c  rootfs.tar.gz
 5a06623bb936269b262c83add22aa2671b003ab62b45484712e5dfc3a01dec2c  noteos-branding_1.0.0_all.deb
 ```

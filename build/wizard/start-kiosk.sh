@@ -33,6 +33,20 @@ done
 # Disattiva console blanking sul terminale virtuale attivo (VT1)
 TERM=linux setterm --blank 0 --powerdown 0 </dev/tty1 >/dev/tty1 2>/dev/null || true
 
+# Se la calibrazione NVRAM ha ancora il MAC generico fallback, prova a ripristinare il MAC di fabbrica da EFS
+if grep -q "02:00:00:00:00:01" /usr/lib/firmware/brcm/brcmfmac4334-sdio.txt 2>/dev/null; then
+    mkdir -p /tmp/efs
+    if mount /dev/mmcblk0p3 /tmp/efs 2>/dev/null || mount /dev/block/mmcblk0p3 /tmp/efs 2>/dev/null; then
+        hw_mac=$(cat /tmp/efs/wifi/.mac.info 2>/dev/null | tr -d '\r\n ' | tr '[:upper:]' '[:lower:]')
+        umount /tmp/efs 2>/dev/null || true
+        if [[ "${hw_mac}" =~ ^([0-9a-f]{2}:){5}[0-9a-f]{2}$ ]]; then
+            sed -i "s/^macaddr=.*/macaddr=${hw_mac}/" /usr/lib/firmware/brcm/brcmfmac4334-sdio*.txt /lib/firmware/brcm/brcmfmac4334-sdio*.txt 2>/dev/null || true
+            modprobe -r brcmfmac 2>/dev/null && modprobe brcmfmac 2>/dev/null || true
+            sleep 1
+        fi
+    fi
+fi
+
 # Disattiva esplicitamente il risparmio energetico Wi-Fi e imposta regdom IT per massima potenza RF
 iw dev wlan0 set power_save off 2>/dev/null || true
 iw reg set IT 2>/dev/null || true

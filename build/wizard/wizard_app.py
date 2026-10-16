@@ -820,7 +820,7 @@ class InstallWorker(QThread):
                 sddm_theme = "breeze" if desk_id == "kde" else "debian-maui"
                 sddm_lines = [
                     "[General]",
-                    "InputMethod=qtvirtualkeyboard",
+                    "InputMethod=",
                     "",
                     "[Theme]",
                     f"Current={sddm_theme}",
@@ -870,10 +870,26 @@ class InstallWorker(QThread):
                         f.write(xsetup_script)
                     os.chmod("/usr/share/sddm/scripts/Xsetup", 0o755)
 
-                # Drop-in per sincronizzazione sincrona con Plymouth (evita lockup EBUSY su /dev/dri/card0)
+                # Drop-in per sincronizzazione con Plymouth, backend QML software e log su file
                 os.makedirs("/etc/systemd/system/sddm.service.d", exist_ok=True)
-                with open("/etc/systemd/system/sddm.service.d/plymouth.conf", "w") as f:
-                    f.write("[Unit]\nDescription=NoteOS SDDM Plymouth Synchronization Drop-in\nWants=plymouth-quit.service plymouth-quit-wait.service\nAfter=plymouth-quit.service plymouth-quit-wait.service\n")
+                try:
+                    if os.path.exists("/etc/systemd/system/sddm.service.d/plymouth.conf"):
+                        os.unlink("/etc/systemd/system/sddm.service.d/plymouth.conf")
+                except Exception:
+                    pass
+                sddm_override_content = (
+                    "[Unit]\n"
+                    "Description=NoteOS SDDM Hardware & Plymouth Synchronization\n"
+                    "Wants=plymouth-quit.service plymouth-quit-wait.service\n"
+                    "After=plymouth-quit.service plymouth-quit-wait.service\n"
+                    "\n"
+                    "[Service]\n"
+                    "Environment=\"QT_QUICK_BACKEND=software\"\n"
+                    "StandardOutput=file:/var/log/sddm.log\n"
+                    "StandardError=file:/var/log/sddm.log\n"
+                )
+                with open("/etc/systemd/system/sddm.service.d/override.conf", "w") as f:
+                    f.write(sddm_override_content)
 
                 # Assegna utente sddm ai gruppi grafici e DRM per accelerazione Mesa Lima
                 self._run_cmd(["usermod", "-a", "-G", "video,render,input", "sddm"], check=False)

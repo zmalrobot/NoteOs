@@ -86,8 +86,8 @@ OB_EOF
 openbox --config-file ~/.config/openbox/rc.xml &
 sleep 0.05
 
-# Avvia il wizard grafico di NoteOS a schermo intero (1280x800)
-python3 /usr/share/noteos-setup/wizard_app.py "$@"
+# Avvia il wizard grafico di NoteOS a schermo intero (1280x800) con log su file
+python3 /usr/share/noteos-setup/wizard_app.py "$@" 2>&1 | tee -a /var/log/noteos-setup.log
 XINIT_EOF
 chmod +x /tmp/noteos-kiosk-xinitrc
 
